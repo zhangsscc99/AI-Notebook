@@ -1,0 +1,74 @@
+<div class="section-header"><div class="index">CW28</div><h2>什么是 Agent Loop？Claude Code 如何把一次提问变成多轮执行</h2></div>
+
+          <p>Agent Loop（智能体循环）是 Agent 运行时最核心的控制循环。普通聊天通常只完成一次“用户输入 → 模型回复”，而 Agent Loop 会在模型要求调用工具后暂停本轮回答，真正执行工具，再把结果作为新的上下文交还给模型，让它继续判断下一步。</p>
+
+          <div class="callout"><strong>一句话：</strong>Agent Loop 是“模型决策 → 工具执行 → 结果回填 → 再次决策”的闭环；它让模型从生成文本，升级为能够观察环境、采取行动并根据结果修正行动的执行系统。</div>
+
+          <h3>Claude Code 中对应的源码结构</h3>
+          <p>源码里并没有一个名为 <code class="inline">AgentLoop</code> 的类。真正的实现位于 <code class="inline">src/query.ts</code>：公开入口 <code class="inline">query()</code> 调用内部异步生成器 <code class="inline">queryLoop()</code>，后者以 <code class="inline">while (true)</code> 持续运行。上层 <code class="inline">QueryEngine.submitMessage()</code> 负责一次对话的提交、会话状态和消息持久化，并消费 <code class="inline">query()</code> 产生的流式消息。</p>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>上层：会话生命周期</h3>
+              <p><code class="inline">QueryEngine.ts</code> 管理消息历史、权限拒绝、读取缓存、用量与中止信号。一个 <code class="inline">QueryEngine</code> 对应一段会话，每次 <code class="inline">submitMessage()</code> 开始用户视角的一轮。</p>
+            </article>
+            <article class="mini-card">
+              <h3>内层：执行循环</h3>
+              <p><code class="inline">query.ts</code> 负责模型调用、流式响应、工具调用、工具结果回填、恢复策略和停止条件。一次 <code class="inline">submitMessage()</code> 内部可能经历很多次 Agent Loop 迭代。</p>
+            </article>
+          </div>
+
+          <h3>一次循环实际做了什么</h3>
+          <ol>
+            <li><strong>整理本轮上下文。</strong>循环从 <code class="inline">State</code> 读取消息、工具上下文、压缩状态、恢复计数、停止钩子状态和轮数；必要时先对超长工具结果、历史消息和上下文执行压缩或裁剪。</li>
+            <li><strong>流式调用模型。</strong><code class="inline">deps.callModel()</code> 接收系统提示、用户上下文、历史消息、工具定义和中止信号，并持续产出助手消息与流事件。</li>
+            <li><strong>收集工具调用。</strong>Claude Code 会检查助手消息中的实际 <code class="inline">tool_use</code> 内容块，而不是只相信 API 的 <code class="inline">stop_reason</code>。源码注释明确指出，<code class="inline">stop_reason === "tool_use"</code> 并不总是可靠。</li>
+            <li><strong>执行工具。</strong>没有启用流式工具执行时由 <code class="inline">runTools()</code> 调度；启用时由 <code class="inline">StreamingToolExecutor</code> 在模型仍在输出时提前执行已产生的工具调用。</li>
+            <li><strong>生成工具结果。</strong>权限检查、参数校验和实际执行完成后，每个调用都会产生带相同 <code class="inline">tool_use_id</code> 的 <code class="inline">tool_result</code>。这一步把文件内容、Shell 输出、搜索结果或错误信息变成模型下一轮可读的观察结果。</li>
+            <li><strong>决定继续还是结束。</strong>工具结果、上下文压缩、模型降级、输出 token 恢复、停止钩子、token 预算和最大轮数都可能影响控制流。只有不需要继续执行时，循环才返回终止原因。</li>
+            <li><strong>构造下一轮状态。</strong>源码把本轮输入、助手消息和工具结果重新合并为 <code class="inline">messages: [...messagesForQuery, ...assistantMessages, ...toolResults]</code>，轮数加一，然后开始下一次 <code class="inline">while</code> 迭代。</li>
+          </ol>
+
+          <h3>最小伪代码</h3>
+          <pre><code>state.messages = initialMessages
+
+while (true) {
+  const response = await streamModel(state.messages, tools)
+
+  if (response has no tool_use) {
+    return finish(response)
+  }
+
+  const toolResults = await executeTools(response.tool_use, canUseTool)
+
+  state.messages = [
+    ...state.messages,
+    response,
+    ...toolResults,
+  ]
+  state.turnCount++
+}</code></pre>
+
+          <p>上面的代码只表达最小心智模型。Claude Code 的真实循环还处理流式降级、孤立的工具结果、权限拒绝、上下文压缩、记忆与技能预取、后台任务通知、停止钩子和预算控制。</p>
+
+          <h3>工具并不是盲目并行执行</h3>
+          <p><code class="inline">toolOrchestration.ts</code> 会把工具调用分组成批次：通过 <code class="inline">isConcurrencySafe()</code> 判定为并发安全的连续调用可以并行执行，默认并发上限来自 <code class="inline">CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY</code>，未设置时为 10；非并发安全的调用则串行执行。这个设计既缩短只读搜索、读取等操作的等待时间，也避免修改文件等有副作用的工具互相破坏状态。</p>
+
+          <h3>Agent Loop 与工作流编排是什么关系</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Agent Loop 解决“下一步”</h3>
+              <p>它关注单个执行单元内部的反馈闭环：模型看到当前上下文后决定调用什么工具，运行时执行工具并返回结果，模型再决定下一步。</p>
+            </article>
+            <article class="mini-card">
+              <h3>工作流编排解决“谁来做、按什么顺序做”</h3>
+              <p>它位于更高层，负责任务拆分、父子 Agent、依赖关系、并行/串行策略、结果汇总和失败恢复。每个子 Agent 通常会启动自己的 <code class="inline">query()</code> 循环，而父级负责协调多个循环。</p>
+            </article>
+          </div>
+
+          <p>因此可以把 Claude Code 的架构概括为：<strong>工作流编排协调多个任务或 Agent，Agent Loop 驱动单个 Agent 完成任务。</strong>父级不可能只靠一次模型请求就知道所有后续动作；循环的价值正是让每一轮工具结果改变下一轮决策。</p>
+
+          <h3>循环如何终止</h3>
+          <p>源码中的主要终止原因包括：正常完成 <code class="inline">completed</code>、达到最大轮数 <code class="inline">max_turns</code>、用户在模型流式输出或工具执行阶段中止、停止钩子阻止继续、模型或图片错误、上下文达到阻塞上限，以及提示词过长无法恢复。普通完成还必须经过停止钩子和 token 预算检查，因此“模型不再调用工具”并不总是立即结束。</p>
+
+          <div class="refs">事实来源：用户提供的 Claude Code v2.1.88 npm 解包源码快照，重点核对 <code class="inline">src/query.ts</code>、<code class="inline">src/QueryEngine.ts</code>、<code class="inline">src/services/tools/toolOrchestration.ts</code>、<code class="inline">src/services/tools/StreamingToolExecutor.ts</code> 与 <code class="inline">src/tools/AgentTool/runAgent.ts</code>。该快照缺失部分受 feature gate 控制的内部模块。</div>
