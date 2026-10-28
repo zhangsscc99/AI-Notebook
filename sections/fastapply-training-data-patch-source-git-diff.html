@@ -1,10 +1,95 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">29</div><h2>训练数据的 patch 是怎么得到的，用 git diff 吗</h2></div>
+          <p>结论要分清两层：<strong>真实数据挖掘阶段会用 git diff 拿原始 unified diff</strong>；但真正喂给 FastApply / MinT 的 <code class="inline">patch</code> 通常不是原样的 git diff，而是从 diff 或 old/new 代码里再转换出来的 <strong>SEARCH/REPLACE patch</strong>。</p>
+          <div class="callout"><strong>一句话：</strong>git diff 是“原料”，SEARCH/REPLACE 是“训练输入格式”。训练让模型学的是：看到旧代码 <code class="inline">source</code> 和可定位的 <code class="inline">SEARCH/REPLACE</code> 修改块，输出完整更新后的代码。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. RL-master/FastApply 真实挖数据：先跑 git diff</h3>
+              <p><code class="inline">/root/rlhf/rl_master/applications/fastapply/build/extract.py</code> 是 Git 仓库抽取入口。它先用 <code class="inline">git rev-list --first-parent</code> 找 commit，只保留单父提交；再用 <code class="inline">git diff-tree --name-only -r commit</code> 找变更文件；最后对每个代码文件跑：</p>
+              <pre><code>git diff commit^ commit -- path</code></pre>
+              <p>这个命令得到的是标准 unified diff，里面有 <code class="inline">@@ -old,+new @@</code> hunk、上下文行、<code class="inline">-</code> 删除行、<code class="inline">+</code> 新增行。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 同时取 old_source / new_source</h3>
+              <p>同一个 <code class="inline">extract.py</code> 还会用 <code class="inline">git show commit^:path</code> 取旧文件，用 <code class="inline">git show commit:path</code> 取新文件。也就是说，一条原始样本不是只有 diff，而是三件套：</p>
+              <pre><code>{
+  old_source: 修改前完整文件,
+  new_source: 修改后完整文件,
+  diff: git diff 结果
+}</code></pre>
+              <p>这很关键：后面可以验证 patch 是否真的能把 old_source 变成 new_source。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. parse.py 把 git diff 转成 changes</h3>
+              <p><code class="inline">build/parse.py</code> 会按 <code class="inline">@@</code> hunk 拆 diff。对每个 hunk，保留旧侧的上下文行和删除行，形成 <code class="inline">old</code>；保留新侧的上下文行和新增行，形成 <code class="inline">new</code>。</p>
+              <p>所以它不是让模型直接读复杂 unified diff，而是把每个 diff hunk 抽象成：</p>
+              <pre><code>{"old": "SEARCH 片段", "new": "REPLACE 片段"}</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>4. make.py 再渲染成 SEARCH/REPLACE patch</h3>
+              <p><code class="inline">build/make.py</code> 的 <code class="inline">build()</code> / <code class="inline">build_search_replace_patch()</code> 会把 changes 变成训练 prompt 里的 patch：</p>
+              <pre><code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH
+旧片段
+&#61;&#61;&#61;&#61;&#61;&#61;&#61;
+新片段
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code></pre>
+              <p>这就是模型最终看到的 patch 形态。它比原始 git diff 更适合训练“应用补丁”：SEARCH 是要在 source 中定位的旧片段，REPLACE 是替换后的新片段。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>完整链路可以这样记：</p>
+          <pre><code>Git commit
+  → git diff commit^ commit -- file
+  → old_source = git show commit^:file
+  → new_source = git show commit:file
+  → parse.py 解析 unified diff hunks
+  → changes = [{old: SEARCH片段, new: REPLACE片段}, ...]
+  → make.py 渲染 SEARCH/REPLACE patch
+  → generate/filter 校验可重放、语法、AST、长度、去重
+  → convert.py 写成 prompt + ground_truth
+  → MinT/GRPO 使用 source + patch 采样 updated</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>当前 tiny MinT smoke 不是从 git diff 来的</h3>
+              <p><code class="inline">/root/rlhf/fastapply_pipeline/test_data.py</code> 里的两个 tiny 样本是手写 fixture：Python 样本直接手写 SEARCH/REPLACE；JavaScript 样本用 structured JSON changes。<code class="inline">build_dataset.py</code> 只是读取这些 tiny examples，跑过滤和 prompt 转换。</p>
+              <p>所以当前 smoke test 的 patch 不是现场跑 git diff 得到的，它只用来验证训练链路跑通。</p>
+            </article>
+            <article class="mini-card">
+              <h3>qwen_rlhf 半合成数据：主要从 old/new 用 difflib 造 patch</h3>
+              <p><code class="inline">/root/OpenClaw/src/qwen_rlhf/src/qwen_edit/dataset_builder.py</code> 读取 CommitPackFT 样本里的 <code class="inline">old_contents</code> / <code class="inline">new_contents</code>，然后调用 <code class="inline">make_hunks()</code>。</p>
+              <p><code class="inline">make_hunks()</code> 在 <code class="inline">patching.py</code> 里用的是 Python <code class="inline">difflib.SequenceMatcher</code>，不是执行 <code class="inline">git diff</code> 命令。它从 old/new 行序列中找差异，加上下文行，再格式化成 FastApply 的 SEARCH/REPLACE patch。</p>
+            </article>
+          </div>
+
+          <p>为什么不直接把 git diff 原文喂给模型？主要有三个工程原因：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>更容易定位。</strong>SEARCH/REPLACE 明确告诉模型“在 source 里找这段旧代码，替换成这段新代码”。unified diff 还要理解行号、加减号和上下文。</div>
+            <div class="flow-step" data-step="2"><strong>更容易校验。</strong><code class="inline">apply_search_replace()</code> 可以要求 SEARCH 在 source 中唯一出现；应用后必须等于 new_source。不能唯一命中或不能重放的样本直接丢。</div>
+            <div class="flow-step" data-step="3"><strong>更贴近 FastApply 任务。</strong>模型目标不是生成 diff，而是把 patch 合并成完整 updated code；SEARCH/REPLACE 正好服务这个目标。</div>
+          </div>
+
+          <p>一个具体例子：</p>
+          <pre><code>git diff 原始 hunk：
+@@ -1,2 +1,4 @@
+ def add(a, b):
+-    return a + b
++    result = a + b
++    return result
+
+parse.py 抽成：
+old = "def add(a, b):\n    return a + b"
+new = "def add(a, b):\n    result = a + b\n    return result"
+
+make.py 渲染为训练 patch：
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH
+def add(a, b):
+    return a + b
+&#61;&#61;&#61;&#61;&#61;&#61;&#61;
+def add(a, b):
+    result = a + b
+    return result
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code></pre>
+
+          <div class="callout">最终答案：<strong>用，也不完全用。</strong>真实 Git 仓库数据先用 <code class="inline">git diff</code> 拿 unified diff；但训练输入里的 <code class="inline">patch</code> 通常会被转换成 SEARCH/REPLACE。另一路 qwen_rlhf / CommitPackFT 数据则直接从 old/new contents 用 <code class="inline">difflib.SequenceMatcher</code> 生成 SEARCH/REPLACE，不一定执行 git diff 命令。</div>
+          <div class="refs">参考：<code class="inline">/root/rlhf/rl_master/applications/fastapply/build/extract.py</code>、<code class="inline">parse.py</code>、<code class="inline">make.py</code>、<code class="inline">generate.py</code>、<code class="inline">convert.py</code>、<code class="inline">/root/rlhf/fastapply_pipeline/test_data.py</code>、<code class="inline">/root/OpenClaw/src/qwen_rlhf/src/qwen_edit/dataset_builder.py</code>、<code class="inline">patching.py</code>。</div>

@@ -1,10 +1,36 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">05</div><h2>如果 reward 很好，但最终 GRPO 效果不好，可能是什么原因</h2></div>
+          <p>reward 分数高不等于训练效果一定好。GRPO 优化的是 reward 定义下的相对概率，如果 reward、采样分布、advantage、LoRA 容量或数据覆盖有问题，最后可能出现“reward 看着不错，模型真实效果反而一般”。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>Reward 本身的问题</h3>
+              <ul>
+                <li><strong>reward hacking</strong>：模型学会讨好 verifier，而不是真正会 Apply。</li>
+                <li><strong>reward 太稀疏</strong>：只有 exact match 才给分，绝大多数样本都是 0，advantage 信号很弱。</li>
+                <li><strong>reward 权重错</strong>：例如 tag 格式权重太高，模型只学会包装标签，代码合并能力没提升。</li>
+                <li><strong>离线指标不代表真实场景</strong>：tiny fixture 上 reward 高，但真实 Git diff 更长、更乱、上下文更多。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>GRPO 训练过程的问题</h3>
+              <ul>
+                <li><strong>group size 太小</strong>：组内比较不稳定，advantage 噪声大。本次 smoke 是 1 policy + 1 oracle，只是跑通链路。</li>
+                <li><strong>采样温度不合适</strong>：温度太低，样本都差不多；温度太高，样本太乱，reward 噪声大。</li>
+                <li><strong>ratio 漂移</strong>：新旧策略差太多时，importance ratio 方差变大，训练不稳。</li>
+                <li><strong>学习率过大</strong>：容易把 LoRA 往某些 reward shortcut 上推过头。</li>
+              </ul>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>数据覆盖问题</h3>
+              <p>FastApply 的难点在长上下文、多 hunk、模糊 SEARCH、跨函数依赖、缩进/注释保留。如果训练数据只有短函数，reward 再高也无法保证长文件 Apply 表现。</p>
+            </article>
+            <article class="mini-card">
+              <h3>模型容量问题</h3>
+              <p>LoRA rank 太小、目标层太少，可能 reward 能推一点格式，但推不动复杂代码编辑能力；rank 太大又可能过拟合 tiny reward。</p>
+            </article>
+          </div>
+
+          <div class="callout">排查顺序：先看 reward 是否真的覆盖业务目标，再看 group size/温度/学习率，再看数据难度分布，最后看 LoRA rank 和目标层容量。</div>

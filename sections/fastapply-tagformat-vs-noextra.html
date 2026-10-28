@@ -1,10 +1,39 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">16</div><h2>tag_format 和 no_extra_prose 到底区别在哪</h2></div>
+          <p>这两个字段很像，但判断的是两个不同层级：<strong>tag_format 看“能不能解析”，no_extra_prose 看“是不是只有解析目标”。</strong></p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>tag_format：有没有合法容器</h3>
+              <pre><code>&lt;updated&gt;
+代码
+&lt;/updated&gt;</code></pre>
+              <p>只要能抽到 updated 标签，tag_format 就可以给 1。即使标签前后还有解释，只要正则能找到标签，它仍然算“有容器”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>no_extra_prose：容器外有没有垃圾</h3>
+              <pre><code>好的，代码如下：
+&lt;updated&gt;
+代码
+&lt;/updated&gt;
+这就是修改原因。</code></pre>
+              <p>这个例子 tag_format=1，但 no_extra_prose=0。因为它能解析，但原始输出不是纯粹的 updated 块。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>四种组合</h3>
+              <ul>
+                <li><strong>tag=1, no_extra=1</strong>：最理想，只输出 <code class="inline">&lt;updated&gt;代码&lt;/updated&gt;</code>。</li>
+                <li><strong>tag=1, no_extra=0</strong>：能解析，但模型还在聊天或输出 Markdown。</li>
+                <li><strong>tag=0, no_extra=0</strong>：没按协议输出，自动化最危险。</li>
+                <li><strong>tag=0, no_extra=1</strong>：基本不成立，因为没有 updated 标签就不可能以它开头结尾。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>为什么都要保留</h3>
+              <p>如果只有 tag_format，模型会觉得“只要我把代码包在标签里，外面说几句也没关系”。如果只有 no_extra_prose，没有单独 tag_format，就不容易区分“完全没标签”和“标签结构存在但外面有杂质”。</p>
+            </article>
+          </div>
+
+          <div class="callout">一句话：<strong>tag_format 奖励可解析边界；no_extra_prose 奖励无噪声输出。</strong> 一个管“找得到”，一个管“只有它”。</div>

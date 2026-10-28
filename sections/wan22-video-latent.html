@@ -1,10 +1,42 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">WAN3</div><h2>视频 latent 是什么</h2></div>
+          <p><strong>视频 latent</strong> 可以理解成“被 VAE 压缩过的视频表示”。它不是 RGB 像素帧，而是一个更小的四维张量：<code class="inline">[C, F_latent, H_latent, W_latent]</code>。Wan2.2 真正生成的不是一帧帧像素，而是在这个 latent 空间里从随机噪声逐步去噪，最后再由 VAE 解码回视频帧。</p>
+          <div class="callout"><strong>一句话：</strong>视频 latent 是视频的压缩工作空间。扩散模型/DiT 负责把随机 latent 修成有语义、有运动、有画面的 latent；VAE 负责把 latent 还原成肉眼能看的像素视频。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>原始视频太大。</strong>如果直接在像素空间生成 720P、几十到上百帧视频，token/像素数量巨大，Transformer 和扩散采样成本会非常高。</div>
+            <div class="flow-step" data-step="2"><strong>VAE 先定义压缩空间。</strong>配置里的 <code class="inline">vae_stride</code> 决定压缩比例。T2V/I2V A14B 是 <code class="inline">(4,8,8)</code>，表示时间约压 4 倍，空间高宽各压 8 倍；TI2V-5B 是 <code class="inline">(4,16,16)</code>，空间压缩更强。</div>
+            <div class="flow-step" data-step="3"><strong>推理时先算 target_shape。</strong><code class="inline">WanT2V.generate()</code> 用 <code class="inline">self.vae.model.z_dim</code>、帧数、分辨率和 <code class="inline">vae_stride</code> 算出 latent shape。</div>
+            <div class="flow-step" data-step="4"><strong>初始 latent 是随机噪声。</strong>源码用 <code class="inline">torch.randn(target_shape...)</code> 创建噪声。这个噪声不是“乱码视频文件”，而是 latent 空间里的随机点。</div>
+            <div class="flow-step" data-step="5"><strong>WanModel 多步修改 latent。</strong>每个 timestep，WanModel 根据文本条件和当前 noisy latent 预测去噪方向，scheduler 更新 latent。</div>
+            <div class="flow-step" data-step="6"><strong>最后 decode 成视频。</strong>采样结束得到 <code class="inline">x0</code>，调用 <code class="inline">self.vae.decode(x0)</code> 才变成 <code class="inline">[C, N, H, W]</code> 视频帧张量，再保存为 mp4。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>latent 的形状怎么来的</h3>
+              <p>T2V 源码里直接写了：<code class="inline">target_shape = (z_dim, (F - 1) // stride_t + 1, H // stride_h, W // stride_w)</code>。所以帧数、分辨率越大，latent 仍然越大；但相比像素空间已经压缩很多。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么 channel 不是 3</h3>
+              <p>RGB 视频通道是 3，但 latent channel 是 VAE 学出来的特征维度。Wan2.2 的 <code class="inline">Wan2_2_VAE</code> 默认 <code class="inline">z_dim=48</code>；A14B 使用的 Wan2.1 VAE 也有自己的 latent channel 配置。这里的 channel 表示压缩特征，不是颜色通道。</p>
+            </article>
+            <article class="mini-card">
+              <h3>latent 里有没有“画面语义”</h3>
+              <p>有，但不是人类可读的文本语义。latent 是 VAE 学出来的连续特征空间，能保留颜色、纹理、局部形状、时序运动等足够重建视频的信息。扩散模型学的是如何在这个空间里移动，让 latent 更符合 prompt。</p>
+            </article>
+            <article class="mini-card">
+              <h3>latent 和 token 的关系</h3>
+              <p>WanModel 还会把 latent 继续做 <code class="inline">Conv3d patch_embedding</code>，切成时空 patch token 送入 Transformer。也就是：像素视频先压成 latent，latent 再 patchify 成 Transformer token。</p>
+            </article>
+          </div>
+
+          <pre><code>以 T2V 为例：
+输入：prompt + 目标分辨率 + 帧数
+1. 根据 vae_stride 算 latent 的 F/H/W
+2. torch.randn 初始化 latent 噪声
+3. WanModel + scheduler 在 latent 空间迭代去噪
+4. VAE decode(latent)
+5. save_video 写 mp4</code></pre>
+
+          <div class="callout">所以不要把视频 latent 理解成“缓存的视频文件”。它更像一张高维草稿纸：模型不直接画每个像素，而是在压缩空间里先画结构、运动和细节的隐式表示，最后由 VAE 翻译成真实视频。</div>
+          <div class="refs">参考源码：<code class="inline">/root/Wan2.2/wan/text2video.py:253-288</code>、<code class="inline">/root/Wan2.2/wan/text2video.py:335-368</code>、<code class="inline">/root/Wan2.2/wan/configs/wan_t2v_A14B.py:15-18</code>、<code class="inline">/root/Wan2.2/wan/configs/wan_ti2v_5B.py:15-17</code>、<code class="inline">/root/Wan2.2/wan/modules/model.py:377-396</code>。</div>

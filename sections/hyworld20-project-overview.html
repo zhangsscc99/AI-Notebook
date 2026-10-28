@@ -1,10 +1,80 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">HW1</div><h2>HY-World 2.0 项目概览</h2></div>
+          <p><strong>HY-World 2.0</strong> 是腾讯混元开源的多模态 3D 世界模型项目。它不是“生成一段看起来像 3D 的视频”，而是把文本、单张图、多视角图片或视频变成可长期保存、可编辑、可导入引擎的 <strong>3D 世界资产</strong>，主要输出形态包括 <strong>3DGS / Gaussian Splatting、mesh、点云、深度、法线和相机参数</strong>。</p>
+          <div class="callout"><strong>一句话：</strong>HY-World 2.0 的核心目标是“生成或重建一个可导航的真实 3D 世界”，而不是只生成像素视频。它把全景图生成、轨迹规划、世界扩展、3DGS/mesh 组合、视频/多图重建串成一条工程 pipeline。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 项目有两条主线</h3>
+              <p>README 里把项目分成两个核心能力：<strong>World Generation</strong> 和 <strong>World Reconstruction</strong>。</p>
+              <ul>
+                <li><strong>World Generation：</strong>文本或单图 → 360° panorama → 可导航 3D 世界。</li>
+                <li><strong>World Reconstruction：</strong>多视角图片或视频 → 3D reconstruction / digital twin。</li>
+              </ul>
+              <p>所以它同时覆盖“从想象生成世界”和“从真实拍摄重建世界”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 服务器源码位置</h3>
+              <p>仓库已 clone 到：</p>
+              <pre><code>/root/HY-World-2.0</code></pre>
+              <p>为了避免完整 checkout 大量示例图片/GIF 卡住磁盘和时间，当前本地仓库使用 sparse checkout，保留 README、文档和 <code class="inline">hyworld2/</code> 源码目录；Git remote 和 commit 仍然是原仓库。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>整体架构：从输入到 3D 世界</h3>
+          <p>README 里的 World Generation 架构是四阶段；源码又把后半段拆成五个脚本执行：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>HY-Pano 2.0：全景生成。</strong><code class="inline">hyworld2/panogen/pipeline.py</code> 用 HunyuanImage-3 后端，把输入图片/提示词扩展成 360° equirectangular panorama。</div>
+            <div class="flow-step" data-step="2"><strong>WorldNav：轨迹规划。</strong><code class="inline">hyworld2/worldgen/traj_generate.py</code> 结合 VLM、导航网格和语义目标，规划环绕、探索、重建、上升等相机路线。</div>
+            <div class="flow-step" data-step="3"><strong>Trajectory Rendering：轨迹渲染。</strong><code class="inline">traj_render.py</code> 沿规划好的轨迹渲染点云/深度/相机结果，并为后续视频扩展提供条件。</div>
+            <div class="flow-step" data-step="4"><strong>WorldStereo 2.0：世界扩展。</strong><code class="inline">video_gen.py</code> 加载 <code class="inline">WorldStereo</code>，用 diffusion/video 模型沿轨迹生成关键帧；<code class="inline">PanoramaMemoryBank</code> 负责跨轨迹检索参考，减少风格和几何漂移。</div>
+            <div class="flow-step" data-step="5"><strong>World Composition：3DGS 组合。</strong><code class="inline">gen_gs_data.py</code> 准备训练数据，<code class="inline">world_gs_trainer.py</code> 优化 Gaussian Splatting，并可导出 <code class="inline">.ply</code>、<code class="inline">.spz</code> 和 mesh。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>HY-Pano 2.0 是什么</h3>
+              <p><code class="inline">hyworld2/panogen/README.md</code> 里说明它有两个 backend：完整的 <strong>HunyuanImage-3</strong> pipeline 和更轻的 <strong>Qwen-Image-Edit</strong> backend。默认任务是把普通图像扩展成 360° 全景图。</p>
+              <p><code class="inline">pipeline.py</code> 里有 <code class="inline">HunyuanPanoPipeline</code>，默认模型目录是 <code class="inline">tencent/HY-World-2.0/HY-Pano-2.0</code>，推理后还会做左右边缘 circular blend，保证全景图接缝更自然。</p>
+            </article>
+            <article class="mini-card">
+              <h3>WorldStereo 2.0 是什么</h3>
+              <p><code class="inline">hyworld2/worldgen/README.md</code> 把 WorldStereo 2.0 定位成扩展 panoramic scene 的 diffusion-based video generation model。源码入口是 <code class="inline">video_gen.py</code>，它加载 <code class="inline">WorldStereo.from_pretrained("hanshanxue/WorldStereo")</code>。</p>
+              <p>它不只是“补视频帧”，还接收相机轨迹、点云渲染、参考全景记忆等条件，目的是沿规划路径生成一致的新视角。</p>
+            </article>
+            <article class="mini-card">
+              <h3>WorldMirror 2.0 是什么</h3>
+              <p><code class="inline">hyworld2/worldrecon/pipeline.py</code> 里的 <code class="inline">WorldMirrorPipeline</code> 用于多图/视频到 3D 重建。底层模型 <code class="inline">WorldMirror</code> 在 <code class="inline">hyworldmirror/models/models/worldmirror.py</code>。</p>
+              <p>模型主干是 <code class="inline">VisualGeometryTransformer</code>，再接多个 head：<code class="inline">CameraHead</code> 预测相机，<code class="inline">DPTHead</code> 预测深度/法线/点，<code class="inline">GSFeatHead</code> 和 renderer 处理 3DGS。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3DGS / mesh 输出怎么来</h3>
+              <p><code class="inline">world_gs_trainer.py</code> 是最终世界组合和优化入口。它使用 <code class="inline">gsplat</code> rasterization、SSIM/LPIPS、depth loss、normal loss、sky-depth regularization、MaskGaussian pruning 等训练 Gaussian Splatting。</p>
+              <p>最终资产可以用于实时查看，也能转 <code class="inline">ply</code>、<code class="inline">spz</code>，并通过 TSDF/mesh export 进入更传统的 3D 资产流程。</p>
+            </article>
+          </div>
+
+          <h3>为什么它不是普通视频生成模型</h3>
+          <p>HY-World 2.0 和 Wan / Sora / Genie 这类视频模型最大的差别是输出目标不同：</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>视频生成</h3>
+              <p>输出是一段像素序列。你可以看，但每一帧只是图像；换视角、碰撞、物理交互、导入游戏引擎都很难。</p>
+            </article>
+            <article class="mini-card">
+              <h3>HY-World 2.0</h3>
+              <p>输出是持久 3D 资产。场景可以被导航、编辑、渲染、导入 Unity / Unreal / Blender / Isaac Sim。渲染成本主要发生在生成完成后的一次性 3D 表示上，而不是每次交互都重新生成视频。</p>
+            </article>
+          </div>
+
+          <p>一个最容易讲清楚的例子：</p>
+          <pre><code>输入：一张室内照片，或者一句“未来城市街区”
+
+HY-World 2.0 不是直接输出 mp4：
+  1. 先生成/获得 360° panorama
+  2. 规划可以走的相机路线
+  3. 沿路线生成缺失的新视角
+  4. 把多视角图像、深度、法线、相机组织成 3DGS 训练数据
+  5. 优化成一个可以实时渲染、导航和导出的 3D 世界</code></pre>
+
+          <div class="callout">最短总结：<strong>HY-World 2.0 = HY-Pano 2.0 全景生成 + WorldNav 轨迹规划 + WorldStereo 2.0 世界扩展 + WorldMirror 2.0 重建/几何预测 + 3DGS/mesh 资产组合。</strong>它的关键价值是把 AIGC 从“生成视频”推进到“生成可交互的 3D 世界资产”。</div>
+          <div class="refs">本地源码：<code class="inline">/root/HY-World-2.0</code>，当前 commit <code class="inline">ee5d5bc</code>。参考文件：<code class="inline">README.md</code>、<code class="inline">hyworld2/panogen/README.md</code>、<code class="inline">hyworld2/panogen/pipeline.py</code>、<code class="inline">hyworld2/worldgen/README.md</code>、<code class="inline">hyworld2/worldgen/video_gen.py</code>、<code class="inline">hyworld2/worldgen/gen_gs_data.py</code>、<code class="inline">hyworld2/worldgen/world_gs_trainer.py</code>、<code class="inline">hyworld2/worldrecon/pipeline.py</code>、<code class="inline">hyworld2/worldrecon/hyworldmirror/models/models/worldmirror.py</code>。</div>

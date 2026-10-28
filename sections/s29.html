@@ -1,10 +1,27 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">29</div><h2>memory 测试入口</h2></div>
+          <p>如果要改 OpenClaw memory，测试入口要按风险分层选。不要只跑一个 happy path，因为 memory 的失败模式通常在 provider、SQLite、FTS、vector、QMD fallback、session visibility 上。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>工具层测试</h3>
+              <p>看 <code class="inline">tools.test.ts</code>、<code class="inline">tools.citations.test.ts</code>、<code class="inline">tools.recall-tracking.test.ts</code>。验证 memory_search / memory_get 返回格式、引用、错误降级。</p>
+            </article>
+            <article class="mini-card">
+              <h3>manager 搜索测试</h3>
+              <p>看 <code class="inline">manager-search.test.ts</code>、<code class="inline">manager-search-preflight.test.ts</code>、<code class="inline">hybrid.test.ts</code>、<code class="inline">mmr.test.ts</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>sync / reindex 测试</h3>
+              <p>看 <code class="inline">manager.atomic-reindex.test.ts</code>、<code class="inline">manager-targeted-sync.test.ts</code>、<code class="inline">manager.session-reindex.test.ts</code>、<code class="inline">manager.sync-errors-do-not-crash.test.ts</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>QMD / provider 测试</h3>
+              <p>看 <code class="inline">qmd-manager.test.ts</code>、<code class="inline">qmd-compat.test.ts</code>、<code class="inline">manager.mistral-provider.test.ts</code>、<code class="inline">manager-embedding-policy.test.ts</code>。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>推荐改动后的最小验证顺序：</p>
+          <pre><code>pnpm test extensions/memory-core/src/memory/hybrid.test.ts
+pnpm test extensions/memory-core/src/memory/manager-search-preflight.test.ts
+pnpm test extensions/memory-core/src/tools.test.ts
+pnpm test extensions/memory-core/src/memory/qmd-manager.test.ts</code></pre>
+          <div class="callout">如果改了 schema、chunking、embedding model、source visibility 或 QMD fallback，必须扩展测试，不要只修快照或只跑 CLI。</div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/**/*.test.ts</code>、<code class="inline">packages/memory-host-sdk/src/host/*.test.ts</code></div>

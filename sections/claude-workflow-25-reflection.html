@@ -1,10 +1,50 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">C25</div><h2>Claude Code 的 reflection 怎么做</h2></div>
+          <p>结论要先说清：从源码看，Claude Code 不像 Reflexion 论文那样有一个独立、统一、每轮必跑的 <strong>ReflectionTool / ReflectionEngine</strong>。它更像是把 reflection 拆散到了多个工程闭环里：工具失败回填、stop hook 反馈、plan/todo 状态、compact summary、多 agent 任务状态。</p>
+          <div class="callout"><strong>一句话：</strong>Claude Code 的 reflection 不是一个单独模块，而是“把错误、反馈、计划和摘要重新放回下一轮模型上下文”，让模型在下一轮自己修正。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 工具结果自纠错</h3>
+              <p><code class="inline">query.ts</code> 收到 tool_use 后执行工具；失败时并不直接崩溃，而是把错误包装成 <code class="inline">is_error: true</code> 的 <code class="inline">tool_result</code>。下一轮模型读到错误原因后，重新选择参数、工具或方案。</p>
+              <p>这就是最常见的“反思”：模型不是事后写一篇 reflection，而是在下一轮看到失败证据后调整行为。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. Stop hook 反馈循环</h3>
+              <p><code class="inline">query/stopHooks.ts</code> 和 <code class="inline">src/utils/hooks.ts</code> 支持 Stop hooks。hook 可以在模型准备停止时返回 blocking feedback，让主循环继续，而不是直接结束。</p>
+              <p>例如项目规定“停止前必须跑测试”，Stop hook 发现没测试，就把反馈塞回上下文，模型下一轮会继续补测试。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. Plan / Todo / TaskList 是显式状态</h3>
+              <p>Plan mode、TodoWrite、TaskList 让模型把当前目标、子任务、完成状态外显出来。外显状态本身会进入后续上下文，模型可以对照“计划还剩什么”来修正下一步。</p>
+              <p>这属于工作流层面的 reflection：不是重新训练模型，而是让状态可见、可更新、可检查。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. Compact summary 保存经验教训</h3>
+              <p><code class="inline">services/compact/*</code> 会在上下文压缩时总结用户意图、已改文件、关键错误、剩余任务。压缩后的 summary 会替代旧长上下文，继续指导后续回合。</p>
+              <p>这可以看作“长程 reflection”：把过去执行过程提炼成可继续执行的状态摘要。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>一个失败后自修正的流程：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">模型计划编辑文件，发出 <code class="inline">Edit</code> tool_use。</div>
+            <div class="flow-step" data-step="2">运行时发现 old_string 不唯一或文件没读过，返回错误 <code class="inline">tool_result</code>。</div>
+            <div class="flow-step" data-step="3">错误结果被追加进 messages，进入下一轮模型调用。</div>
+            <div class="flow-step" data-step="4">模型阅读错误，先调用 <code class="inline">Read</code> 或扩大上下文，再重新发出更精确的 <code class="inline">Edit</code>。</div>
+            <div class="flow-step" data-step="5">如果模型想停止，Stop hook 还可以做最后检查；不满足则反馈继续。</div>
+          </div>
+
+          <pre><code>不是：
+runTask → runReflectionEngine → writeReflection → retry
+
+更接近：
+assistant tool_use
+  → tool_result(error / success)
+  → append to messages
+  → next model turn reads evidence
+  → revised tool_use or final answer
+  → stop hooks may block and feed feedback
+  → compact summary preserves useful state</code></pre>
+
+          <div class="callout">所以讲 Claude Code 的 reflection，应该说它是<strong>协议级反思</strong>：把失败、权限拒绝、hook 反馈、计划状态、压缩摘要都变成下一轮模型可读输入。不要误讲成源码里有一个统一的“反思大脑”。</div>
+          <div class="refs">参考文件：<code class="inline">src/query.ts</code>、<code class="inline">src/query/stopHooks.ts</code>、<code class="inline">src/utils/hooks.ts</code>、<code class="inline">src/services/compact/*</code>、<code class="inline">src/tasks/DreamTask/DreamTask.ts</code>。</div>

@@ -1,10 +1,110 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">DJ1</div><h2>概览介绍 Data-Juicer 数据清洗项目</h2></div>
+          <p><strong>Data-Juicer</strong> 是阿里开源的面向基础模型时代的数据处理 / 数据清洗系统。它不是一个单独的“去重脚本”，而是一套<strong>可配置、可组合、可扩展、可分布式运行的数据操作系统</strong>：用 YAML 或 Python 把一串算子组织成 pipeline，对文本、图像、音频、视频、多模态、Agent 轨迹、RAG 数据做清洗、过滤、去重、转换、分析和导出。</p>
+          <div class="callout"><strong>一句话：</strong>Data-Juicer = 数据加载/格式化 + 200+ 清洗算子 + pipeline 配方 + 本地/Ray 分布式执行器 + 监控/追踪/缓存/断点续跑 + 导出。它解决的是“把原始脏数据变成 AI-ready 数据”的工程问题。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 仓库位置</h3>
+              <p>项目已 clone 到服务器：</p>
+              <pre><code>/root/data-juicer</code></pre>
+              <p>当前读取版本：</p>
+              <pre><code>repo: https://github.com/alibaba/data-juicer.git
+commit: 29ada7c</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>2. 它的定位</h3>
+              <p>README 里把它叫做“基础模型时代的数据操作系统”。它服务的不是某一种单点任务，而是整个 AI 数据生命周期：预训练语料清洗、SFT/RL 数据整理、Agent 交互轨迹清洗、多模态数据处理、RAG 索引前处理、数据质量分析等。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>整体 pipeline：从原始数据到清洗后数据集</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>写配置。</strong>用户在 YAML 里指定 <code class="inline">dataset_path</code>、<code class="inline">export_path</code>、<code class="inline">executor_type</code>、<code class="inline">process</code> 算子列表。示例在 <code class="inline">demos/process_simple/process.yaml</code>。</div>
+            <div class="flow-step" data-step="2"><strong>启动任务。</strong>入口脚本 <code class="inline">tools/process_data.py</code> 调 <code class="inline">init_configs()</code> 读取配置，然后根据 <code class="inline">executor_type</code> 选择 <code class="inline">DefaultExecutor</code>、<code class="inline">RayExecutor</code> 或 <code class="inline">PartitionedRayExecutor</code>。</div>
+            <div class="flow-step" data-step="3"><strong>加载数据。</strong><code class="inline">DatasetBuilder</code> 根据配置加载本地文件、目录、HuggingFace 数据集、JSON/CSV/Parquet/Text 等数据源，并包装成 <code class="inline">NestedDataset</code>。</div>
+            <div class="flow-step" data-step="4"><strong>加载算子。</strong><code class="inline">load_ops()</code> 根据 YAML 里的 <code class="inline">process</code> 列表，从 <code class="inline">OPERATORS</code> registry 里实例化具体算子。</div>
+            <div class="flow-step" data-step="5"><strong>执行算子链。</strong><code class="inline">NestedDataset.process()</code> 按顺序运行每个 OP：mapper 修改样本，filter 过滤样本，deduplicator 去重，selector 选择高质量样本，aggregator/grouper/pipeline 做更高层处理。</div>
+            <div class="flow-step" data-step="6"><strong>优化和容错。</strong>执行器支持 OP fusion、adaptive batch size、cache、checkpoint、skip_op_error、resource monitor、tracer，处理大规模数据时能提速、追踪、恢复。</div>
+            <div class="flow-step" data-step="7"><strong>导出结果。</strong><code class="inline">Exporter</code> 把处理后的数据写到 <code class="inline">export_path</code>，支持分片、并行导出、S3 等场景。</div>
+          </div>
+
+          <h3>核心设计：一切围绕 Operator 算子组织</h3>
+          <p>Data-Juicer 的核心抽象是 <strong>OP / Operator</strong>。源码里 <code class="inline">data_juicer/ops/base_op.py</code> 定义了统一基类和注册表：</p>
+          <pre><code>OPERATORS = Registry("Operators")
+
+OP
+  ├── Mapper       # 修改/转换样本
+  ├── Filter       # 根据质量规则过滤样本
+  ├── Deduplicator # 去重
+  ├── Selector     # 按排序选样本
+  ├── Grouper      # 分组
+  ├── Aggregator   # 汇总
+  └── Pipeline     # 数据集级 pipeline 操作</code></pre>
+          <p>用户在 YAML 里写的算子名，例如 <code class="inline">language_id_score_filter</code>、<code class="inline">text_length_filter</code>、<code class="inline">document_minhash_deduplicator</code>，最终都会通过 <code class="inline">OPERATORS.modules[op_name](**args)</code> 实例化。</p>
+
+          <h3>它有哪些数据清洗能力</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>文本清洗</h3>
+              <p>包括长度过滤、语言识别、困惑度过滤、重复率过滤、特殊字符过滤、停用词比例、HTML 清理、链接/邮箱/IP 清理、Unicode 修复、句子切分、表格/参考文献/版权删除等。</p>
+            </article>
+            <article class="mini-card">
+              <h3>去重</h3>
+              <p>支持文档级 exact match、line-level 去重、MinHash LSH、SimHash、Ray 分布式去重、图像/视频去重等。适合大规模预训练语料去重。</p>
+            </article>
+            <article class="mini-card">
+              <h3>多模态处理</h3>
+              <p>覆盖图像、音频、视频：图像美学/NSFW/水印/尺寸/图文相似度，视频时长/分辨率/运动分数/水印/NSFW/OCR 面积，视频抽帧、caption、深度估计、目标分割、姿态估计等。</p>
+            </article>
+            <article class="mini-card">
+              <h3>LLM/VLM 辅助清洗</h3>
+              <p>有 LLM quality score、LLM difficulty score、LLM task relevance、VLM caption/tagging、API 模型 mapper、Ray+vLLM pipeline 等，用模型本身参与数据打分、改写、标注和筛选。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Agent 数据清洗</h3>
+              <p>源码里有 <code class="inline">agent_bad_case_signal_mapper</code>、<code class="inline">agent_trace_coherence_mapper</code>、<code class="inline">agent_tool_relevance_mapper</code>、<code class="inline">agent_tool_type_mapper</code> 等，说明它也在覆盖 Agent 轨迹质量分析和工具调用数据清洗。</p>
+            </article>
+            <article class="mini-card">
+              <h3>RAG / 数据分析</h3>
+              <p>支持文本分块、实体/关系/事件/关键词抽取、数据画像、数据可视化、数据质量洞察。它可以作为 RAG 入库前的数据标准化和质量控制层。</p>
+            </article>
+          </div>
+
+          <h3>执行层：为什么它能跑大规模数据</h3>
+          <p>源码入口 <code class="inline">tools/process_data.py</code> 显示它有三类 executor：</p>
+          <ul>
+            <li><strong>default：</strong>本地执行，适合小中规模数据和开发调试。</li>
+            <li><strong>ray：</strong>Ray 分布式执行，适合大规模数据并行处理。</li>
+            <li><strong>ray_partitioned：</strong>分区 Ray 执行器，面向更大规模、更强容错和 OP 级隔离环境。</li>
+          </ul>
+          <p><code class="inline">DefaultExecutor.run()</code> 的流程很清楚：加载 dataset → <code class="inline">load_ops()</code> 准备算子 → 可选 OP fusion / adaptive batch size → <code class="inline">dataset.process()</code> 执行 → exporter 导出。这个结构让同一套清洗 recipe 可以从笔记本扩展到 Ray 集群。</p>
+
+          <h3>一个最小使用例子</h3>
+          <p>README 里给的最小 Python 用法如下：先构造数据集，再串两个算子：一个长度过滤，一个空白符归一化。</p>
+          <pre><code>from data_juicer.core.data import NestedDataset
+from data_juicer.ops.filter import TextLengthFilter
+from data_juicer.ops.mapper import WhitespaceNormalizationMapper
+
+ds = NestedDataset.from_dict({
+    "text": ["Short", "This passes the filter.", "Text   with   spaces"]
+})
+res_ds = ds.process([
+    TextLengthFilter(min_len=10),
+    WhitespaceNormalizationMapper()
+])</code></pre>
+          <p>对应到工程上，就是“先过滤掉太短文本，再把保留下来的文本空格归一化”。复杂任务只是把这个算子链扩展成几十个 OP，并换成 Ray 执行。</p>
+
+          <h3>和手写清洗脚本的区别</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>手写脚本</h3>
+              <p>通常是一次性逻辑：读取文件、写几条规则、输出结果。问题是难复现、难复用、难追踪、难扩展到多模态和分布式。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Data-Juicer</h3>
+              <p>把清洗流程变成 recipe 和 operator。每一步可配置、可版本管理、可测试、可追踪、可并行、可插拔模型，也能沉淀成团队共享的数据处理资产。</p>
+            </article>
+          </div>
+
+          <div class="callout">最短总结：<strong>Data-Juicer 是一个面向大模型数据生产的“算子化数据清洗平台”。</strong>它把传统数据清洗、去重、质量过滤、多模态处理、LLM/VLM 标注、Agent/RAG 数据整理和 Ray 分布式执行统一到一套 pipeline 里。</div>
+          <div class="refs">本地源码：<code class="inline">/root/data-juicer</code>，当前 commit <code class="inline">29ada7c</code>。参考文件：<code class="inline">README_ZH.md</code>、<code class="inline">README.md</code>、<code class="inline">demos/process_simple/process.yaml</code>、<code class="inline">tools/process_data.py</code>、<code class="inline">data_juicer/config/config.py</code>、<code class="inline">data_juicer/core/executor/default_executor.py</code>、<code class="inline">data_juicer/core/data/dj_dataset.py</code>、<code class="inline">data_juicer/ops/base_op.py</code>、<code class="inline">data_juicer/ops/load.py</code>、<code class="inline">docs/Operators.md</code>。</div>

@@ -1,10 +1,72 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">JEPA3</div><h2>JEPA 世界模型和多模态大模型区别在哪：不就是 LLM 拼接多模态吗</h2></div>
+          <p>不是。你的理解里“多模态大模型”通常指 <strong>视觉/音频 encoder + projector + LLM</strong>：把图像、视频、音频变成一串 embedding，接到语言模型上下文里，让 LLM 输出文本、工具调用或结构化答案。<strong>JEPA 世界模型不是这个范式</strong>。JEPA 的核心是把观测编码成世界状态 latent，再学习这个 latent 如何随时间和动作演化，最后用 latent 距离做规划。</p>
+          <div class="callout"><strong>一句话：</strong>多模态 LLM 的目标是“看懂多模态输入后用语言回答”；JEPA 的目标是“预测世界状态怎么变，并用预测结果选择动作”。一个主要输出语言 token，一个主要输出未来 state embedding。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>输入不同。</strong>多模态 LLM 把图片/视频当成 prompt 条件；JEPA 把图片/视频/环境观测当成世界状态观测。</div>
+            <div class="flow-step" data-step="2"><strong>中间表示不同。</strong>MLLM 的视觉 embedding 最终服务于 LLM 的文本上下文；JEPA 的 encoder latent 就是世界状态本身，后续 predictor 直接在这个 state latent 上预测未来。</div>
+            <div class="flow-step" data-step="3"><strong>训练目标不同。</strong>MLLM 常见目标是 next-token / instruction tuning / preference learning；JEPA 的训练是 <code class="inline">prediction_loss(predicted_latent, target_latent) + anti-collapse regularizer</code>。</div>
+            <div class="flow-step" data-step="4"><strong>输出不同。</strong>MLLM 输出文本 token 或工具调用；JEPA 输出未来 latent state。源码里的 <code class="inline">JEPA.unroll()</code> 返回的是 <code class="inline">predicted_states</code>，不是词表 logits。</div>
+            <div class="flow-step" data-step="5"><strong>用途不同。</strong>MLLM 擅长语义解释、问答、任务拆解；JEPA 擅长把动作序列放进世界模型里想象未来，再用 CEM / MPPI 选低 cost 动作。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>多模态大模型：接到语言模型</h3>
+              <p>典型结构是 image/video encoder 先抽视觉特征，projector 把特征映射到 LLM hidden size，然后和文本 token 一起送进 LLM。最终优化和输出大多围绕语言：回答问题、描述图片、执行指令、调用工具。</p>
+              <pre><code>image/video -> vision encoder -> projector
+text prompt -> tokenizer
+视觉 embedding + 文本 token -> LLM -> text/tool output</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>JEPA：预测世界 latent</h3>
+              <p>源码里 <code class="inline">JEPAbase</code> 只有三件核心东西：<code class="inline">encoder</code>、<code class="inline">action_encoder</code>、<code class="inline">predictor</code>。训练时先 <code class="inline">state = self.encoder(observations)</code>，再预测未来 state。</p>
+              <pre><code>observation -> encoder -> state latent
+action -> action encoder
+state latent + action -> predictor -> future latent</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>MLLM 看图后“说出来”</h3>
+              <p>比如给一张房间图，MLLM 可以回答“门在左边，目标在右上角”。这很有用，但它默认不会在 latent 空间里模拟“如果向右走两步、再向上走三步会到哪里”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>JEPA 看图后“往前推演”</h3>
+              <p>在 <code class="inline">ac_video_jepa</code> 里，模型根据当前图像状态和动作预测下一状态 latent。planner 再采样很多动作序列，用 JEPA 预测后果，选择最接近 goal latent 的动作。</p>
+            </article>
+          </div>
+
+          <p>源码层面最硬的证据在 <code class="inline">eb_jepa/jepa.py</code>：训练和推理围绕 state latent，而不是语言 token。</p>
+          <pre><code># jepa.py 简化理解
+state = self.encoder(observations)
+actions_encoded = self.action_encoder(actions)
+predicted_states = self.predictor(state, actions_encoded)
+loss = self.predcost(state, predicted_states) + self.regularizer(state, actions)</code></pre>
+
+          <p>规划层面也能看出区别。<code class="inline">GCAgent.set_goal()</code> 会把目标图像编码成 <code class="inline">goal_state_enc</code>；<code class="inline">ReprTargetDistMPCObjective</code> 用 MSE 计算 predicted encoding 和 goal encoding 的距离；<code class="inline">CEMPlanner</code> / <code class="inline">MPPIPlanner</code> 采样动作序列，找 cost 低的动作。</p>
+          <pre><code>当前观测 obs -> encode -> current latent
+候选动作序列 a[1:H]
+  -> JEPA unroll -> predicted future latents
+  -> cost = MSE(predicted_latent, goal_latent)
+  -> planner 选择最低 cost 的动作序列</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么 JEPA 更像世界模型</h3>
+              <p>因为它显式学习状态转移：当前状态 + 动作会导致什么未来状态。这个能力可以直接接规划器。世界模型的重点不是“会描述世界”，而是“能预测世界怎么演化”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么 MLLM 不等于世界模型</h3>
+              <p>MLLM 可以有很强的世界知识和视觉理解，但它的主训练目标通常不是低层状态动力学。它可以说“往左走会靠近门”，但不一定有一个可微的 latent dynamics 模型给 planner 调用。</p>
+            </article>
+            <article class="mini-card">
+              <h3>JEPA 不生成漂亮内容</h3>
+              <p>JEPA 不是文生图、文生视频模型。它通常不负责把 latent decode 成高保真图片，而是让 latent 足够可预测、可规划。视觉质量不是它的第一目标。</p>
+            </article>
+            <article class="mini-card">
+              <h3>两者可以互补</h3>
+              <p>一个更完整的 agent 可以让 MLLM 做高层语义理解和任务拆解，让 JEPA 做低层世界状态预测和动作规划。它们不是同一种模型，只是都可能处理多模态输入。</p>
+            </article>
+          </div>
+
+          <div class="callout">所以最短回答是：<strong>JEPA 不是“LLM 拼多模态 encoder”。</strong>它可以用视觉 encoder，但这个 encoder 的输出不是拿去让 LLM 说话，而是作为世界状态 latent；predictor 学 latent dynamics；planner 用 predicted latent 和 goal latent 的能量/距离来选动作。</div>
+          <div class="refs">参考源码：<code class="inline">/root/eb_jepa/eb_jepa/jepa.py</code>、<code class="inline">/root/eb_jepa/eb_jepa/planning.py</code>、<code class="inline">/root/eb_jepa/eb_jepa/architectures.py</code>、<code class="inline">/root/eb_jepa/eb_jepa/losses.py</code>、<code class="inline">/root/eb_jepa/examples/ac_video_jepa/main.py</code>、<code class="inline">/root/eb_jepa/examples/video_jepa/main.py</code>。</div>

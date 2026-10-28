@@ -1,10 +1,62 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">C26</div><h2>Claude Code 的记忆用了 RAG 吗，什么索引方式，用了什么 embedding 模型</h2></div>
+          <p>结论：Claude Code 的记忆<strong>不是传统 embedding + vector DB 的 RAG</strong>。更准确地说，它是<strong>文件型记忆 + Markdown 索引 + 轻量检索/LLM 选择器 + 上下文注入</strong>。源码里没有看到给记忆建立向量库、调用 embedding 模型、做 ANN 相似度搜索或 reranker 的主路径。</p>
+          <div class="callout"><strong>一句话：</strong>Claude Code 有 RAG-like 的“从外部记忆取回再塞进上下文”，但检索方式不是向量检索；核心索引是 <code class="inline">CLAUDE.md</code> 层级、<code class="inline">MEMORY.md</code> 人写/模型维护的 Markdown 目录、memory 文件 frontmatter manifest，再用 Claude/Sonnet 做相关记忆选择。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. CLAUDE.md：确定性加载，不是 RAG</h3>
+              <p><code class="inline">src/utils/claudemd.ts</code> 的 <code class="inline">getMemoryFiles()</code> 会按顺序加载 Managed、User、Project、Local 记忆文件：例如 <code class="inline">/etc/claude-code/CLAUDE.md</code>、<code class="inline">~/.claude/CLAUDE.md</code>、项目里的 <code class="inline">CLAUDE.md</code>、<code class="inline">.claude/CLAUDE.md</code>、<code class="inline">.claude/rules/*.md</code>、<code class="inline">CLAUDE.local.md</code>。</p>
+              <p>这一步不是“搜索最相关文档”，而是<strong>按目录层级和优先级直接注入指令</strong>。它支持 <code class="inline">@include</code>，但 include 也是路径解析，不是 embedding 检索。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. Auto Memory：MEMORY.md 是 Markdown 目录</h3>
+              <p><code class="inline">src/memdir/memdir.ts</code> 定义 <code class="inline">ENTRYPOINT_NAME = 'MEMORY.md'</code>，并在 prompt 里明确要求：每条记忆写到自己的 <code class="inline">.md</code> 文件，再把指针加到 <code class="inline">MEMORY.md</code>；<code class="inline">MEMORY.md</code> 是 index，不是正文记忆。</p>
+              <p><code class="inline">src/utils/claudemd.ts</code> 会把 auto memory 的 <code class="inline">MEMORY.md</code> 当作 <code class="inline">AutoMem</code> 读取，截断到 <code class="inline">MAX_ENTRYPOINT_LINES = 200</code> 和 <code class="inline">MAX_ENTRYPOINT_BYTES = 25000</code>。所以这里的“索引”是人类可读 Markdown 目录，不是倒排索引或向量索引。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. Relevant Memories：像 RAG，但用 LLM 选择，不用 embedding</h3>
+              <p>真正像 RAG 的路径在 <code class="inline">src/utils/attachments.ts</code> 和 <code class="inline">src/memdir/findRelevantMemories.ts</code>：每个用户回合启动 <code class="inline">startRelevantMemoryPrefetch()</code>，后台调用 <code class="inline">findRelevantMemories()</code> 找相关记忆，选中后作为 <code class="inline">relevant_memories</code> attachment 注入下一轮上下文。</p>
+              <p>但它不是向量召回。<code class="inline">scanMemoryFiles()</code> 只扫描 memory 目录里的 <code class="inline">.md</code>，排除 <code class="inline">MEMORY.md</code>，读取每个文件前 30 行 frontmatter，提取 <code class="inline">description</code>、<code class="inline">type</code>、mtime，按 mtime 新到旧排序，最多保留 200 个候选。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 相关性判断：Sonnet sideQuery，而不是 embedding model</h3>
+              <p><code class="inline">findRelevantMemories.ts</code> 里 <code class="inline">selectRelevantMemories()</code> 会把候选 manifest 发给 <code class="inline">sideQuery()</code>，模型参数是 <code class="inline">getDefaultSonnetModel()</code>，要求返回 JSON：<code class="inline">selected_memories</code>。系统提示里明确要求最多选 5 个。</p>
+              <p>所以如果问“用了什么 embedding 模型”，答案是：<strong>这条记忆检索主路径没有 embedding 模型</strong>。它用的是 Claude/Sonnet 作为小型相关性选择器，相当于 LLM rerank/selector over metadata，不是 embedding 相似度。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>源码层面的检索流程可以这样记：</p>
+          <pre><code>用户输入新问题
+  → query.ts 每个用户 turn 调 startRelevantMemoryPrefetch()
+  → attachments.ts 取最后一个真实 user message
+  → findRelevantMemories(input, memoryDir)
+  → memoryScan.ts 扫描 memoryDir 下 .md 文件，排除 MEMORY.md
+  → 每个文件只读前 30 行，解析 frontmatter.description / type / mtime
+  → 最多 200 个候选，按 mtime 新到旧排序
+  → sideQuery(model=getDefaultSonnetModel()) 让 Sonnet 从 manifest 里选最多 5 个文件
+  → readMemoriesForSurfacing() 读取选中文件，单文件最多 200 行 / 4096 bytes
+  → 包成 relevant_memories attachment
+  → messages.ts 渲染成 &lt;system-reminder&gt; 注入模型上下文</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Session Memory 也不是向量 RAG</h3>
+              <p><code class="inline">src/services/SessionMemory/sessionMemory.ts</code> 是会话内自动摘要：当上下文 token 数和工具调用数达到阈值后，注册的 post-sampling hook 会启动 forked agent，读取 <code class="inline">~/.claude/session-memory</code> 下的 Markdown 笔记文件，然后只允许它用 <code class="inline">Edit</code> 更新这个文件。</p>
+              <p>默认阈值在 <code class="inline">sessionMemoryUtils.ts</code>：初始化约 10000 tokens，之后每增长 5000 tokens 且工具调用达到 3 次左右再更新。它服务于 compact/连续性，不是 embedding 检索系统。</p>
+            </article>
+            <article class="mini-card">
+              <h3>历史会话搜索：也是 LLM/关键词，不是 embedding</h3>
+              <p><code class="inline">src/utils/agenticSessionSearch.ts</code> 里历史 session 搜索先做字符串包含预过滤：title、tag、branch、summary、first prompt、transcript excerpt；再把最多 100 个 session 发给 <code class="inline">sideQuery()</code>，用 <code class="inline">getSmallFastModel()</code> 做语义选择。</p>
+              <p>这更像“关键词预筛 + 小模型语义排序”，不是 vector store。它主要服务 <code class="inline">/resume</code> 一类会话查找，不等同于 auto memory 的长期记忆检索。</p>
+            </article>
+          </div>
+
+          <p>和 OpenClaw 这类更典型 memory RAG 的区别：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>OpenClaw 风格：</strong>文档切分 → embedding → 向量/全文索引 → query embedding → 相似召回 → rerank/拼上下文。</div>
+            <div class="flow-step" data-step="2"><strong>Claude Code 风格：</strong>Markdown 文件 → frontmatter/目录索引 → LLM 看 manifest 选择文件 → 文件片段注入上下文。</div>
+            <div class="flow-step" data-step="3"><strong>核心取舍：</strong>Claude Code 少了 embedding 基建，简单、可解释、可手改；但大规模语义召回能力弱于真正向量 RAG。</div>
+          </div>
+
+          <div class="callout">最终回答：Claude Code 的记忆有“RAG-like 检索注入”，但不是 embedding RAG；索引方式主要是文件路径层级、<code class="inline">MEMORY.md</code> Markdown 目录、frontmatter manifest、mtime 排序和 LLM 选择；没有专门的 memory embedding 模型，相关性选择调用的是 <code class="inline">getDefaultSonnetModel()</code> 的 <code class="inline">sideQuery()</code>。</div>
+          <div class="refs">参考文件：<code class="inline">src/utils/claudemd.ts</code>、<code class="inline">src/memdir/memdir.ts</code>、<code class="inline">src/memdir/memoryScan.ts</code>、<code class="inline">src/memdir/findRelevantMemories.ts</code>、<code class="inline">src/utils/attachments.ts</code>、<code class="inline">src/utils/messages.ts</code>、<code class="inline">src/services/SessionMemory/sessionMemory.ts</code>、<code class="inline">src/utils/agenticSessionSearch.ts</code>。</div>

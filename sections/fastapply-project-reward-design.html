@@ -1,10 +1,50 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">09</div><h2>详解：项目里的 reward 是怎么做的</h2></div>
+          <p>这个项目里 reward 分两层：<strong>训练用 verifier reward</strong> 和 <strong>RL-master 环境 reward</strong>。两者目标一致：不奖励聊天能力，只奖励模型能否严格把 patch 合并成正确代码，并且输出格式干净。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1）FastApply 训练 reward</h3>
+              <p>位置：<code class="inline">/root/rlhf/fastapply_pipeline/rewards.py</code>。</p>
+              <pre><code>total = 0.55 * exact
+      + 0.20 * similarity
+      + 0.10 * tag_format
+      + 0.05 * no_extra_prose
+      + 0.10 * syntax</code></pre>
+              <ul>
+                <li><strong>exact</strong>：抽取 <code class="inline">&lt;updated&gt;...&lt;/updated&gt;</code> 后，和 gold updated source 归一化比较，完全一致给 1。</li>
+                <li><strong>similarity</strong>：用 <code class="inline">difflib.SequenceMatcher</code> 算相似度，避免只有 0/1 导致信号太稀疏。</li>
+                <li><strong>tag_format</strong>：必须能抽到 <code class="inline">&lt;updated&gt;</code> 标签，格式对才给分。</li>
+                <li><strong>no_extra_prose</strong>：输出要从 <code class="inline">&lt;updated&gt;</code> 开始、以 <code class="inline">&lt;/updated&gt;</code> 结束，不能夹解释、Markdown fence、废话。</li>
+                <li><strong>syntax</strong>：对 Python 用 AST parse；JS/TS 用轻量 regex 分析，保证代码结构基本可用。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>2）RL-master 环境 reward</h3>
+              <p>位置：<code class="inline">/root/rlhf/rl_master/agent/environment/packages/fastapply/impl.py</code>。</p>
+              <pre><code>correctness = compare(reference, candidate)
+is_valid = bool(candidate)
+reward = correctness * 0.8 + is_valid * 0.2</code></pre>
+              <p>这里更接近图片里的环境式 reward：正确性占 80%，输出是否有效占 20%。也就是说，完全正确且格式有效得 1.0；有输出但不正确通常只有 0.2；空输出是 0。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先抽取。</strong>用 <code class="inline">extract_updated_tag</code> / <code class="inline">extract_tagged_content</code> 只取 <code class="inline">updated</code> 标签内的代码。</div>
+            <div class="flow-step" data-step="2"><strong>再比较。</strong>训练 reward 做 exact + similarity；RL-master rule reward 用 <code class="inline">difflib</code> 忽略空白行后比较增删行。</div>
+            <div class="flow-step" data-step="3"><strong>再验格式。</strong>检查是否有标签、是否只有标签包裹的代码、是否没有多余解释。</div>
+            <div class="flow-step" data-step="4"><strong>最后做 judge fallback。</strong><code class="inline">rl_master/applications/fastapply/reward/score.py</code> 里 rule compare 失败时，会构造 diff view 并用 <code class="inline">judge.yaml</code> 让 LLM 判等价。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么 exact 权重大</h3>
+              <p>FastApply 是代码应用任务，不是开放问答。真正需要的是“补丁是否完整合并、代码是否和目标一致”。所以 exact 权重最高；similarity 只是为了 tiny / early stage 训练时提供平滑信号。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么要格式分</h3>
+              <p>代码 agent 最怕模型输出解释、代码块围栏、冲突标记或半截代码。格式 reward 会把模型推向“只输出可被机器消费的 updated code”，这对后续自动 apply 很关键。</p>
+            </article>
+          </div>
+
+          <div class="callout">一句话：项目 reward 的核心是 <strong>正确合并 patch</strong>，其次是 <strong>输出可解析、无废话、语法合法</strong>。它不是偏好模型“说得好”，而是奖励模型“改得准”。</div>
+          <div class="refs">参考代码：<code class="inline">fastapply_pipeline/rewards.py</code>、<code class="inline">rl_master/applications/fastapply/reward/score.py</code>、<code class="inline">rl_master/applications/fastapply/reward/utils.py</code>、<code class="inline">rl_master/agent/environment/packages/fastapply/impl.py</code>。</div>

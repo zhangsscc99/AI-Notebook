@@ -1,10 +1,41 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">25</div><h2>详解 LSH</h2></div>
+          <p><strong>LSH</strong> 是 Locality-Sensitive Hashing，目标是让“相似样本更可能落到同一个桶里”。它通常接在 MinHash 后面，用来避免 O(N²) 的全量两两比较。</p>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先拿 MinHash signature。</strong> 每条代码样本都有一个固定长度签名。</div>
+            <div class="flow-step" data-step="2"><strong>切 band。</strong> 把签名切成多个 band，每个 band 有若干 row。</div>
+            <div class="flow-step" data-step="3"><strong>band 内哈希入桶。</strong> 如果两个样本某个 band 完全一样，就会落进同一个桶。</div>
+            <div class="flow-step" data-step="4"><strong>桶内才精比较。</strong> 只对同桶候选再算 Jaccard / similarity，跳过绝大多数不相关 pair。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>band / row 怎么理解</h3>
+              <p>band 越多，每个 band 越短，越容易撞桶，召回高但误报多；band 越少，每个 band 越长，撞桶更难，精度高但漏报多。</p>
+              <pre><code>signature 长度 = bands × rows
+候选条件 = 至少一个 band 完全相等</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>为什么不是直接 MinHash 两两比</h3>
+              <p>假设 100 万条样本，两两比较约 5e11 对，不现实。LSH 先把可能相似的样本捞出来，通常只剩很小的候选集合。</p>
+            </article>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>数据清洗里怎么用</h3>
+              <ul>
+                <li>先对 update/new_source 做 normalize。</li>
+                <li>生成 token shingle 集合。</li>
+                <li>生成 MinHash signature。</li>
+                <li>用 LSH 找相似候选。</li>
+                <li>超过阈值的样本只保留一条。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>对 GRPO 的价值</h3>
+              <p>去掉近重复后，group 内采样更有差异，reward 不会被模板样本主导；测试集也更难被 train 里的相似代码泄漏污染。</p>
+            </article>
+          </div>
+
+          <div class="callout">一句话：MinHash 负责“压缩相似度”，LSH 负责“快速召回可能相似的候选”。两者合起来就是大规模代码数据去重的常见组合。</div>

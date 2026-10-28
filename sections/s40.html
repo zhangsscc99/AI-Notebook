@@ -1,10 +1,48 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">40</div><h2>哪些索引方式能索引 session transcript</h2></div>
+          <p>这里要分清两个层次：<strong>session transcript 这个数据源</strong>和<strong>底层检索索引方式</strong>。OpenClaw 里 transcript 的 source 是 <code class="inline">sessions</code>；只要这个 source 被启用，它可以进入 builtin SQLite 的 FTS / vector / hybrid 索引，也可以进入 QMD 的 sessions collection。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. builtin SQLite：FTS 文本索引</h3>
+              <p>如果没有可用 embedding，或者配置走 FTS-only，session transcript 会被 <code class="inline">buildSessionEntry()</code> 转成纯文本 chunk，写入 <code class="inline">chunks</code> 和 <code class="inline">chunks_fts</code>。这种方式按关键词 / BM25 类文本匹配召回。</p>
+              <p>适合：无需 embedding provider、成本低、部署简单。缺点是语义召回弱，换一种说法可能搜不到。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. builtin SQLite：vector 语义索引</h3>
+              <p>如果 embedding provider 和 sqlite-vec 可用，session chunks 会被算 embedding，写入 <code class="inline">chunks_vec</code>。检索时可以按语义相似度召回历史对话。</p>
+              <p>适合：用户问“上次那个方案”“我之前说的偏好”这类语义模糊问题。缺点是依赖 embedding 模型、索引成本更高。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. builtin SQLite：hybrid 混合索引</h3>
+              <p>OpenClaw 的 builtin backend 可以同时保留 FTS 和 vector。session transcript 作为 <code class="inline">source="sessions"</code> 参与同一套 chunk / score / citation 流程。</p>
+              <p>适合：既要精确词命中，又要语义召回。实际工程里这是更稳的选择。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. QMD backend：导出 sessions collection 后索引</h3>
+              <p>QMD 不是直接用 builtin 的定向 sessionFiles 机制。启用 <code class="inline">memory.qmd.sessions.enabled</code> 后，QMD manager 会把 JSONL transcript 导出成清洗后的 User/Assistant Markdown 文本，放到 <code class="inline">~/.openclaw/agents/&lt;id&gt;/qmd/sessions/</code>，再由 QMD collection 建索引。</p>
+              <p>注意：QMD 的 <code class="inline">sync(sessionFiles)</code> 会忽略“只刷某个 transcript”的 hint，改为跑常规 update。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="callout"><strong>怎么搜到 session transcript？</strong><code class="inline">memory_search</code> 支持 <code class="inline">corpus="sessions"</code>，这会把搜索 source 限制到 session transcripts；<code class="inline">corpus="memory"</code> 会排除 sessions；不指定时取决于当前配置 sources。</div>
+
+          <pre><code>// tools.ts 里的意图：按 corpus 限制 memory source
+const searchSources = requestedCorpus === "sessions"
+  ? ["sessions"]
+  : requestedCorpus === "memory"
+    ? ["memory"]
+    : undefined;</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>容易混淆：session transcript vs session-memory Markdown</h3>
+              <p><code class="inline">sessions</code> 是原始会话 JSONL 清洗后的索引源；<code class="inline">MEMORY.md</code> / <code class="inline">memory/*.md</code> 是长期记忆文件。后者属于 <code class="inline">source="memory"</code>，不是 transcript 本身。</p>
+            </article>
+            <article class="mini-card">
+              <h3>容易混淆：dreaming session corpus</h3>
+              <p><code class="inline">memory/.dreams/session-corpus/</code> 是 dream / promotion 机制生成的派生语料。它如果被 memory 文件索引扫到，走的是 memory 文件路径，不等于 builtin 直接索引 <code class="inline">source="sessions"</code> 的 transcript。</p>
+            </article>
+          </div>
+
+          <div class="callout">最短答案：<strong>能索引 session transcript 的主路径有两条：builtin 直接索引 <code class="inline">source="sessions"</code>；QMD 先导出 sessions collection 再索引。builtin 内部又可以是 FTS-only、vector-only/semantic、FTS+vector hybrid。</strong></div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/memory/manager-sync-ops.ts</code>、<code class="inline">extensions/memory-core/src/memory/qmd-manager.ts</code>、<code class="inline">extensions/memory-core/src/tools.ts</code>、<code class="inline">packages/memory-host-sdk/src/host/session-files.ts</code>、<code class="inline">docs/concepts/memory-qmd.md</code>、<code class="inline">docs/reference/memory-config.md</code></div>

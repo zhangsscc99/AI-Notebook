@@ -1,10 +1,88 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">HS9</div><h2>Hermes Agent 接云端 Vercel Sandbox 有什么好处：优劣分析</h2></div>
+          <p>Hermes 接 Vercel Sandbox，本质是把 <code class="inline">terminal backend</code> 从本机 / Docker 切到 Vercel 提供的云端 sandbox。这样 agent 的命令不是在你电脑上跑，而是在 Vercel 的云端隔离环境里跑。Hermes 代码里对应的是 <code class="inline">vercel_sandbox</code> backend，默认工作目录是 <code class="inline">/vercel/sandbox</code>。</p>
+          <div class="callout"><strong>一句话：</strong>Vercel Sandbox 的价值是“云端、按需、和 Web/Node 生态贴近的执行环境”；它适合前端/Node/Web 预览类 agent 工作流，但不一定适合所有通用 Linux、GPU、长期训练或复杂系统级任务。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 好处：agent 不依赖本地电脑</h3>
+              <p>如果 Hermes 接了 Vercel Sandbox，用户可以从聊天入口、CLI、远程 gateway 发任务，命令在 Vercel 云端执行。你的本机不用一直开着，也不需要把依赖都装在本机。</p>
+              <p><strong>意义：</strong>这更接近“云端 agent runtime”：agent 可以在云端跑构建、测试、脚本、预览流程，而不是绑定用户笔记本。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>2. 好处：更适合 Web / Node / 前端任务</h3>
+              <p>Hermes 的 Vercel backend 支持 runtime 配置，代码里支持的 runtime 包括 <code class="inline">node24</code>、<code class="inline">node22</code>、<code class="inline">python3.13</code>。这说明它天然偏向 Web / Node / serverless 风格工作负载。</p>
+              <p><strong>适合：</strong>前端项目检查、Node 脚本、构建预览、轻量 API demo、和 Vercel 项目相关的自动化流程。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>3. 好处：环境隔离和资源按需</h3>
+              <p>Vercel Sandbox 是远端云沙箱。agent 跑命令、装依赖、生成文件，都发生在云端 sandbox 里，不直接污染宿主机。</p>
+              <p>Hermes 创建 sandbox 时还会传入资源参数，例如 vCPU 和 memory。相比 local，至少执行位置和资源边界更清晰。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>4. 好处：支持 snapshot / 持久化思路</h3>
+              <p>Hermes 的 <code class="inline">VercelSandboxEnvironment</code> 支持 task_id 维度的 snapshot 元数据。cleanup 时会尝试 snapshot sandbox，后续同一 task 可以从 snapshot 恢复。</p>
+              <p><strong>意义：</strong>云沙箱不是每次都必须从零开始。依赖、项目状态、生成文件有机会跨任务复用，适合多轮 agent 工作流。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>5. 好处：Hermes 状态同步</h3>
+              <p>Vercel backend 里也用了 <code class="inline">FileSyncManager</code>，执行前会 sync，cleanup 时会 sync_back。同步重点是 sandbox 内的 Hermes 状态目录，例如 <code class="inline">.hermes</code> 相关文件。</p>
+              <p><strong>注意：</strong>这不等于自动把任意用户项目源码树完整同步来回。项目代码仍然需要 clone、上传、挂接平台工作流，或通过 git 管理。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>6. 代价：平台和认证依赖</h3>
+              <p>Hermes 对 Vercel Sandbox 有明确 preflight：需要安装 <code class="inline">vercel</code> Python SDK；认证需要 <code class="inline">VERCEL_TOKEN</code>、<code class="inline">VERCEL_PROJECT_ID</code>、<code class="inline">VERCEL_TEAM_ID</code>，或者开发用的 <code class="inline">VERCEL_OIDC_TOKEN</code>。</p>
+              <p><strong>缺点：</strong>本地 Docker 能离线跑；Vercel Sandbox 依赖外部云服务、账号、网络、平台可用性和配额。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>7. 代价：运行时和磁盘不如 Docker 自由</h3>
+              <p>Docker 可以换任意镜像、装系统包、改底层环境。Vercel Sandbox 则受平台 runtime 约束。Hermes 代码还限制了 Vercel Sandbox 的 custom disk：<code class="inline">container_disk</code> 不能随便改，只能用默认共享设置。</p>
+              <p><strong>结论：</strong>Vercel 适合标准化云运行，不适合所有重型系统工程任务。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>8. 代价：不适合重 GPU / HPC / 长训练</h3>
+              <p>如果任务是 CUDA、GPU 训练、大型编译、系统级依赖、HPC 队列，Vercel Sandbox 通常不是首选。</p>
+              <p><strong>更合适：</strong>GPU 任务用 SSH 到 GPU server；HPC 用 Singularity/Apptainer；大规模 RL rollout 或更通用云执行可考虑 Modal / Daytona。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>选择 backend。</strong>配置 <code class="inline">terminal.backend = "vercel_sandbox"</code>。</div>
+            <div class="flow-step" data-step="2"><strong>准备认证。</strong>配置 Vercel token/project/team 或 OIDC token，并安装 Vercel SDK。</div>
+            <div class="flow-step" data-step="3"><strong>选择 runtime。</strong>比如 <code class="inline">node22</code>、<code class="inline">node24</code>、<code class="inline">python3.13</code>。</div>
+            <div class="flow-step" data-step="4"><strong>创建云沙箱。</strong>Hermes 通过 Vercel SDK 创建 sandbox，工作目录落到 <code class="inline">/vercel/sandbox</code>。</div>
+            <div class="flow-step" data-step="5"><strong>执行命令。</strong>terminal / 文件相关执行通过这个 backend 进入云端环境。</div>
+            <div class="flow-step" data-step="6"><strong>清理和 snapshot。</strong>cleanup 时同步 Hermes 状态、尝试保存 snapshot，然后停止 sandbox 避免资源泄漏。</div>
+          </div>
+
+          <pre><code>Vercel Sandbox selection guide
+
+choose Vercel Sandbox when:
+  - task is Web / Node / frontend oriented
+  - you want cloud execution, not local laptop execution
+  - you want sandbox-per-task style isolation
+  - you want Vercel-platform-adjacent preview/build workflows
+  - resource needs are moderate and runtime constraints are acceptable
+
+avoid Vercel Sandbox when:
+  - you need arbitrary Docker images or deep OS customization
+  - you need GPU / CUDA / HPC
+  - you need full control over disk sizing
+  - you need offline/local execution
+  - you need to mount local project directories directly like Docker bind mount
+
+compare:
+  Docker  -> best local engineering sandbox
+  Vercel  -> best Vercel/Web cloud sandbox
+  Modal   -> more general cloud compute sandbox
+  Daytona -> persistent cloud workspace
+  SSH     -> your own remote machine</code></pre>
+
+          <div class="callout"><strong>最终建议：</strong>如果 Hermes Agent 的任务主要是前端、Node、Web preview、Vercel 项目自动化，接 Vercel Sandbox 很有价值；如果你要的是通用代码沙箱，Docker 更直接；如果你要云端长期 workspace，Daytona 更像开发机；如果你要弹性计算或 RL rollout，Modal 往往更通用。</div>
+          <div class="refs">参考：<code class="inline">/root/hermes/tools/environments/vercel_sandbox.py</code>、<code class="inline">/root/hermes/tools/terminal_tool.py:120-180</code>、<code class="inline">/root/hermes/tools/terminal_tool.py:1216-1231</code>、<code class="inline">/root/hermes/tools/terminal_tool.py:2205-2206</code></div>

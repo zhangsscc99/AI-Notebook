@@ -1,10 +1,131 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">HW2</div><h2>如果用 LangGraph / LangChain 重新设计 Hermes 工作流编排</h2></div>
+          <p>如果用 <strong>LangGraph</strong> 来重做 Hermes，我不会先追求“一个超智能 agent”，而会先把 Hermes 现在已经有的运行时拆成<strong>图里的几个稳定节点</strong>，再用条件路由把它们串起来。最自然的思路是：<strong>session / context / model loop / tools / delegate / approval / persistence / learning review</strong> 分层建图。</p>
+          <div class="callout"><strong>核心原则：</strong>用 <code class="inline">StateGraph</code> 管 Hermes 的状态流；用 <code class="inline">ToolNode</code> 管工具执行；用 <code class="inline">Command</code> 或 <code class="inline">add_conditional_edges()</code> 做动态路由；用 <code class="inline">checkpointer</code> + <code class="inline">thread_id</code> 做 session 持久化；用 <code class="inline">interrupt()</code> 处理审批和人类介入。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先定义 graph state。</strong>用 <code class="inline">MessagesState</code> 或自定义 <code class="inline">TypedDict</code> / Pydantic state，至少放：messages、session metadata、enabled toolsets、skills、memory hits、todo/task state、delegate requests、review flags。</div>
+            <div class="flow-step" data-step="2"><strong>再搭主图骨架。</strong>用 <code class="inline">StateGraph(...)</code>，从 <code class="inline">START</code> 进入 ingress/session 节点，最后落到 <code class="inline">END</code>。</div>
+            <div class="flow-step" data-step="3"><strong>把 prompt 装配做成节点。</strong>不要把 prompt_builder 散在各处，而是单独一个 node：收集 memory、skills、session context，再产出给模型调用的 messages。</div>
+            <div class="flow-step" data-step="4"><strong>把模型思考和工具执行拆开。</strong>一个 llm node 只负责产出 assistant message / tool calls；一个 <code class="inline">ToolNode</code> 负责真正执行工具。</div>
+            <div class="flow-step" data-step="5"><strong>用动态路由驱动循环。</strong>如果模型输出 tool calls，就 route 到 tools；如果要 delegate，就 route 到 subgraph；如果无 tool calls，就 route 到 final response。</div>
+            <div class="flow-step" data-step="6"><strong>把复杂能力拆成 subgraphs。</strong>delegate、多 worker、后台任务、skill review 都不要塞进主 loop，而是做成 compiled subgraph 再挂回主图。</div>
+            <div class="flow-step" data-step="7"><strong>给高风险节点加 interrupt。</strong>文件写入、危险命令、外发消息、人工审批，统一通过 <code class="inline">interrupt()</code> 停住，等人类用 <code class="inline">Command(resume=...)</code> 恢复。</div>
+            <div class="flow-step" data-step="8"><strong>最后加 persistence 和 learning loop。</strong>编译时挂 <code class="inline">InMemorySaver</code> / <code class="inline">PostgresSaver</code>，执行时带 <code class="inline">thread_id</code>；任务结束后再进 skill/memory review 节点，把经验沉淀回系统。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>1. 图的根骨架怎么搭</h3>
+              <pre><code>from langgraph.graph import StateGraph, START, END
+from langgraph.graph import MessagesState
+
+builder = StateGraph(MessagesState)
+builder.add_node("ingress", ingress_node)
+builder.add_node("assemble_context", assemble_context_node)
+builder.add_node("llm", llm_node)
+builder.add_node("tools", tool_node)
+builder.add_edge(START, "ingress")</code></pre>
+              <p>这里最像 Hermes 的，是先把“收到请求”“装配上下文”“模型决策”“工具执行”拆成显式节点，而不是把一切塞进一个大函数。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>2. Hermes 的 session 怎么映射</h3>
+              <p>Hermes 很强调 session，所以 LangGraph 版本里一定要把 session 放到 persistence 层，而不是只靠 messages 列表。直接做法是：</p>
+              <ul>
+                <li>编译图时加 <code class="inline">checkpointer=InMemorySaver()</code>（开发）或 <code class="inline">PostgresSaver</code>（生产）</li>
+                <li>每次调用图时传 <code class="inline">config={"configurable": {"thread_id": ...}}</code></li>
+              </ul>
+              <p>这样 Hermes 的 session resume / thread continuity 就可以直接映射到 LangGraph 的 thread/checkpoint 模型。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>3. prompt_builder 怎么落到 LangChain</h3>
+              <p>Hermes 现在有很重的 prompt 装配层。如果换 LangChain，我会把这层拆成：</p>
+              <ul>
+                <li><code class="inline">ChatPromptTemplate.from_messages(...)</code></li>
+                <li><code class="inline">MessagesPlaceholder</code> 放历史消息</li>
+                <li>一个 context assembly node 在调用模型前，把 memory / skills / platform constraints 组进 prompt variables</li>
+              </ul>
+              <p>也就是说，prompt 不是静态字符串，而是“LangChain prompt object + LangGraph context node”联合生成。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>4. 工具循环怎么设计</h3>
+              <p>Hermes 的核心就是 tool loop。LangGraph 版最自然的写法是：</p>
+              <ul>
+                <li>工具定义用 <code class="inline">@tool</code></li>
+                <li>执行器用 <code class="inline">langgraph.prebuilt.ToolNode</code></li>
+                <li>llm node 产出 tool calls 后，通过 <code class="inline">add_conditional_edges()</code> 或 <code class="inline">Command(goto="tools")</code> 跳到 tools node</li>
+                <li>tools node 执行完成，再回到 llm node 继续循环</li>
+              </ul>
+              <pre><code>builder.add_conditional_edges(
+    "llm",
+    route_after_llm,
+    {"tools": "tools", "delegate": "delegate", "final": "finalize"}
+)</code></pre>
+            </article>
+
+            <article class="mini-card">
+              <h3>5. delegate / subagent 怎么映射</h3>
+              <p>Hermes 的 delegate_tool 很重。如果用 LangGraph，我会把 delegate 做成单独 subgraph，而不是普通工具文本返回：</p>
+              <ul>
+                <li>父图用 <code class="inline">builder.add_node("delegate", compiled_subgraph)</code></li>
+                <li>subgraph 里再处理 child context、child tools、child result merge</li>
+                <li>如果需要 fan-out，可用 <code class="inline">Send</code> 从条件边批量派发多个并行任务</li>
+              </ul>
+              <p>这样比把 delegate 完全伪装成单个 tool call 更清晰，也更贴近 Hermes 的真实结构。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>6. 审批和危险操作怎么做</h3>
+              <p>Hermes 现在有 approval 思路。LangGraph 版最标准的是在关键节点直接调用 <code class="inline">interrupt()</code>，把图暂停；等人类确认后，用 <code class="inline">Command(resume=...)</code> 恢复执行。</p>
+              <p>这很适合映射：</p>
+              <ul>
+                <li>危险 shell 命令</li>
+                <li>文件写入</li>
+                <li>外发消息</li>
+                <li>高风险自动操作</li>
+              </ul>
+            </article>
+
+            <article class="mini-card">
+              <h3>7. learning loop 怎么接回去</h3>
+              <p>Hermes 的特色不是只输出答案，而是会做 skill review / memory 回流。所以图跑到 final response 后，我会再挂一个 post-run review node：</p>
+              <ul>
+                <li>读本次 messages / tool traces</li>
+                <li>判断要不要更新 memory</li>
+                <li>判断要不要新建或修改 skill</li>
+                <li>把结果写入 store / filesystem</li>
+              </ul>
+              <p>如果想和 LangChain store 体系对齐，可以在 runtime context 里接持久化 store；短期记忆靠 checkpointer，长期记忆靠 store。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>8. 为什么不用 create_agent 一把梭</h3>
+              <p>LangChain 的 <code class="inline">create_agent</code> 更适合快速起一个标准 agent；但 Hermes 这种“session 很重、tool loop 很重、delegate 很重、learning loop 很重”的系统，更适合直接用 LangGraph 原生 Graph API 自己搭。原因是：</p>
+              <ul>
+                <li>你能显式控制节点边界</li>
+                <li>你能显式控制状态结构</li>
+                <li>你能显式控制审批、持久化、并行、子图</li>
+                <li>你能让系统结构更接近 Hermes 真实运行时，而不是被通用 agent abstraction 压扁</li>
+              </ul>
+            </article>
+          </div>
+
+          <pre><code>LangGraph 版 Hermes（推荐骨架）
+START
+  -> ingress/session_resolve
+  -> assemble_context
+  -> llm
+      -> conditional route
+         -> tools (ToolNode) -> llm
+         -> delegate_subgraph -> llm
+         -> approval_interrupt -> resume -> llm
+         -> finalize
+  -> post_run_review
+      -> memory update
+      -> skill update
+  -> END</code></pre>
+
+          <div class="callout">如果一句话总结：<strong>用 LangGraph 重做 Hermes，关键不是“把 agent 跑起来”，而是把 Hermes 已有的 session、tool loop、delegate、approval、learning review 全都提升为图上的一等公民。</strong></div>
+          <div class="refs">设计参考：<a href="https://docs.langchain.com/oss/python/langgraph/overview">LangGraph overview</a>、<a href="https://docs.langchain.com/oss/python/langgraph/graph-api">Graph API</a>、<a href="https://docs.langchain.com/oss/python/langchain/tools">LangChain Tools / ToolNode</a>、<a href="https://docs.langchain.com/oss/python/langgraph/use-subgraphs">LangGraph Subgraphs</a>、<a href="https://docs.langchain.com/oss/python/langgraph/persistence">LangGraph Persistence</a>、<a href="https://docs.langchain.com/oss/python/langgraph/human-in-the-loop">LangGraph Interrupts</a>、<a href="https://docs.langchain.com/oss/python/langgraph/add-memory">LangGraph Memory</a></div>

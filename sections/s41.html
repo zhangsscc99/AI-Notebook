@@ -1,10 +1,65 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">41</div><h2>OpenClaw 记忆里的 QMD 到底是什么：技术、存储方式，还是云端服务</h2></div>
+          <p><strong>QMD 不是一个单纯的文件格式，也不是云端数据库。</strong>在 OpenClaw 里，QMD 是一个可选的 <strong>local-first search sidecar / memory backend</strong>：一个独立的本地搜索引擎二进制程序，OpenClaw 通过子进程调用它，让它负责建索引、embedding、BM25 / vector / rerank / query expansion 等高级检索能力。</p>
+          <div class="callout"><strong>一句话：</strong>builtin backend 是 OpenClaw 自己用 SQLite + FTS/vector 做记忆索引；QMD backend 是 OpenClaw 把记忆文件、额外目录、session transcript 交给本地 <code class="inline">qmd</code> 搜索引擎来索引和检索。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. QMD 是一种“技术/组件”</h3>
+              <p>它是独立项目和命令行程序，配置里默认命令是 <code class="inline">qmd</code>。OpenClaw 通过 <code class="inline">spawn</code> 跑 <code class="inline">qmd update</code>、<code class="inline">qmd embed</code>、<code class="inline">qmd search</code> / <code class="inline">qmd query</code>。所以它更像“本地搜索 sidecar”，不是 OpenClaw 内部一个普通函数。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. QMD 也是一种“记忆后端”</h3>
+              <p>OpenClaw 的 memory backend 有 <code class="inline">builtin</code> 和 <code class="inline">qmd</code>。当配置 <code class="inline">memory.backend="qmd"</code> 时，OpenClaw 创建 <code class="inline">QmdMemoryManager</code>，把 memory search 的索引和查询交给 QMD 这条链路。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. QMD 也是本地索引存储方式</h3>
+              <p>QMD 会维护自己的本地 index。OpenClaw 为每个 agent 建隔离目录：<code class="inline">~/.openclaw/agents/&lt;agentId&gt;/qmd/</code>，并设置 <code class="inline">XDG_CONFIG_HOME</code>、<code class="inline">XDG_CACHE_HOME</code>。源码里 index 路径是 <code class="inline">xdg-cache/qmd/index.sqlite</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. QMD 默认不是云端服务</h3>
+              <p>文档明确把它称为 local-first。搜索、索引、rerank/query expansion 默认在本机 QMD 进程里做；模型可以是本地 GGUF，并由 QMD 运行时管理。首次使用可能需要下载模型，但这不等于把你的记忆发到云端检索。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>QMD 在 OpenClaw 里的工作流可以按这个顺序理解：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>配置启用。</strong>用户设置 <code class="inline">memory.backend="qmd"</code>，可选配置 <code class="inline">memory.qmd.paths</code>、<code class="inline">memory.qmd.sessions.enabled</code>、<code class="inline">searchMode</code> 等。</div>
+            <div class="flow-step" data-step="2"><strong>创建本地 QMD home。</strong>OpenClaw 在 agent 目录下创建 <code class="inline">qmd/xdg-config</code>、<code class="inline">qmd/xdg-cache</code>、<code class="inline">qmd/sessions</code> 等隔离路径。</div>
+            <div class="flow-step" data-step="3"><strong>注册 collections。</strong>QMD collection 可以对应 <code class="inline">MEMORY.md</code>、<code class="inline">memory/</code>、额外文档目录、导出的 session transcript。</div>
+            <div class="flow-step" data-step="4"><strong>更新索引。</strong>OpenClaw 在 boot / interval / watch / manual sync 时调用 <code class="inline">qmd update</code>；语义模式下还会调用 <code class="inline">qmd embed</code>。</div>
+            <div class="flow-step" data-step="5"><strong>执行检索。</strong><code class="inline">memory_search</code> 进入 QMD manager，再按 <code class="inline">searchMode</code> 调 <code class="inline">search</code>、<code class="inline">vsearch</code> 或 <code class="inline">query</code>。</div>
+            <div class="flow-step" data-step="6"><strong>返回 OpenClaw 结果。</strong>QMD 返回 snippet、path、score，OpenClaw 再转换成统一的 <code class="inline">MemorySearchResult</code> 给 agent 使用。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>QMD 比 builtin 强在哪</h3>
+              <p>builtin 偏轻量：SQLite + FTS/vector。QMD 偏增强：BM25、vector search、reranking、query expansion、额外目录 collection、session transcript collection，并且可以用 MCP / mcporter 方式调用更完整的查询工具。</p>
+            </article>
+            <article class="mini-card">
+              <h3>QMD 的 searchMode 是什么</h3>
+              <p>默认 <code class="inline">search</code> 是 BM25/lexical 搜索，快；<code class="inline">vsearch</code> 是 vector 搜索；<code class="inline">query</code> 是更完整的 hybrid 路径，源码里会构造 <code class="inline">lex + vec + hyde</code> 子查询，适合更强召回但更重。</p>
+            </article>
+            <article class="mini-card">
+              <h3>它到底存什么</h3>
+              <p>它不替代原始记忆文件。<code class="inline">MEMORY.md</code>、<code class="inline">memory/*.md</code>、额外路径文件仍然在原位置；QMD 存的是这些内容的本地搜索索引、collection 元数据、embedding / rerank 所需状态。</p>
+            </article>
+            <article class="mini-card">
+              <h3>如果 QMD 挂了怎么办</h3>
+              <p>OpenClaw 有 fallback 设计。QMD binary 不存在、依赖坏掉、搜索失败时，会尝试回退到 builtin memory engine，避免 agent 因为 QMD 不可用而完全失去记忆检索。</p>
+            </article>
+          </div>
+
+          <pre><code>{
+  memory: {
+    backend: "qmd",
+    qmd: {
+      paths: [{ name: "docs", path: "~/notes", pattern: "**/*.md" }],
+      sessions: { enabled: true },
+      searchMode: "search" // search | vsearch | query
+    }
+  }
+}</code></pre>
+
+          <div class="callout">所以回答你的问题：<strong>QMD 是技术组件 + 本地搜索引擎 + OpenClaw memory backend + 本地索引存储方案。</strong>它不是云端服务；默认依靠本地 qmd 进程和本地索引工作。只有模型首次下载、或你自己配置了外部模型/服务时，才可能涉及网络依赖。</div>
+          <div class="refs">参考：<code class="inline">docs/concepts/memory-qmd.md</code>、<code class="inline">packages/memory-host-sdk/src/host/backend-config.ts</code>、<code class="inline">packages/memory-host-sdk/src/host/qmd-process.ts</code>、<code class="inline">extensions/memory-core/src/memory/qmd-manager.ts</code></div>

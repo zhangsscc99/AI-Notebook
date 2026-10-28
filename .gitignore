@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Generated from content-source/ and sections/
+public/sections/
+public/search-index.json
+src/data/catalog.json

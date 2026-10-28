@@ -1,10 +1,56 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">H2</div><h2>skills vs agentic RL：这两者各自优势是什么，agentic RL 能补 skills 什么短板</h2></div>
+          <p><strong>skills 强在快、便宜、可控、可解释；agentic RL 强在把“会不会做”真正内化到 policy 里。</strong> 两者不是互斥关系，更像两层：skills 是应用层行为塑形，agentic RL 是训练层能力塑形。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>skills 的优势</h3>
+              <ul>
+                <li><strong>上线快：</strong>写一个 skill 就能改 agent 行为，不需要重新训练模型。</li>
+                <li><strong>便宜：</strong>主要成本是 prompt、流程和工具设计，不需要大规模 rollout / reward / update。</li>
+                <li><strong>可控：</strong>你可以明确规定步骤、边界、禁区、工具顺序和输出格式。</li>
+                <li><strong>可解释：</strong>agent 为什么这么做，通常能直接从 skill 文本和工具流程里读出来。</li>
+                <li><strong>适合长尾场景：</strong>某个垂类任务、某个平台接入、某个操作手册，优先用 skill 很划算。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>skills 的瓶颈</h3>
+              <ul>
+                <li><strong>本质仍是外部脚手架：</strong>能力更多是“被提示出来”，不是“长进模型里”。</li>
+                <li><strong>迁移性有限：</strong>换一个相邻任务、换一种输入分布，skill 往往要重写或补丁式叠加。</li>
+                <li><strong>上下文依赖重：</strong>很多表现来自 prompt、例子、流程约束，一旦上下文变形，行为会漂。</li>
+                <li><strong>难以持续自我改进：</strong>做完一次任务后，模型参数没变，下次还得靠同样脚手架重新扶着走。</li>
+                <li><strong>组合复杂度会上升：</strong>skill 越多，交叉覆盖、冲突、维护成本会越来越高。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>agentic RL 的优势</h3>
+              <ul>
+                <li><strong>把行为写进 policy：</strong>不是每次提醒模型怎么做，而是通过 reward 和 update 让它逐步学会怎么做。</li>
+                <li><strong>更适合多步决策：</strong>尤其是 rollout 后能看到任务结果、环境反馈、工具后果的场景。</li>
+                <li><strong>可利用结果信号持续优化：</strong>答对/答错、成败、效率、可执行性，都能变成 reward。</li>
+                <li><strong>能减少对外部脚手架的依赖：</strong>学进模型后的能力，理论上更稳，不必事事靠长 prompt 扶着。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>agentic RL 能补 skills 哪些短板</h3>
+              <ul>
+                <li><strong>补“只会照说明做、不会真正长本事”：</strong>skills 像训练手册，RL 才是在训练能力本身。</li>
+                <li><strong>补“泛化差”：</strong>如果 reward 设计得好，模型能学到比单个 skill 更抽象的决策模式。</li>
+                <li><strong>补“每次都要重新扶”：</strong>参数更新后，下一次 rollout 天然带着上一次学到的改进。</li>
+                <li><strong>补“行为不能闭环优化”：</strong>skills 能规定流程，但不能自动根据结果改 policy；RL 可以。</li>
+                <li><strong>补“复杂多步任务靠 prompt 很脆”：</strong>当任务真的是 sequential decision making，RL 比纯 skill 更像正解。</li>
+              </ul>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <pre><code>skills
+  = runtime scaffolding
+  = prompt / workflow / tool routine / guardrails
+  = 快、便宜、可控
+  = 但能力主要在外面
+
+agentic RL
+  = rollout -> reward -> update
+  = 能力通过训练写进 policy
+  = 慢、贵、复杂
+  = 但能持续改进并弥补 skills 的外部脚手架瓶颈</code></pre>
+          <div class="callout">最短总结：<strong>skills 解决“先把 agent 做得像会做”；agentic RL 解决“让 agent 真的越来越会做”。</strong></div>
+          <div class="refs">参考：<code class="inline">/root/hermes/skills/</code>、<code class="inline">/root/hermes/optional-skills/</code>、<code class="inline">/root/hermes/rl_cli.py</code>、<code class="inline">/root/hermes/tools/rl_training_tool.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/environments/gsm8k_tinker.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/trainer.py</code></div>

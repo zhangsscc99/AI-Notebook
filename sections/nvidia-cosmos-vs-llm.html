@@ -1,10 +1,65 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">COS3</div><h2>Cosmos 和 LLM 的区别是什么</h2></div>
+          <p>Cosmos 和 LLM 都用了 Transformer、token、conditioning、sampling 这些概念，所以容易混。但它们的<strong>目标对象、数据表示、训练目标、输出空间和评估方式</strong>都不一样。</p>
+          <div class="callout"><strong>一句话：</strong>LLM 学的是“文本 token 的下一个词/指令响应”；Cosmos 学的是“视频世界 latent/token 的生成和延展”。LLM 的输出是语言；Cosmos 的输出是世界视频帧或未来视觉状态。</div>
+
+          <h3>1. 输出空间不一样</h3>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>LLM</h3>
+              <p>输出自然语言 token：字、词、subword、代码 token。它可以描述世界，但默认不直接生成视频 latent、像素帧或物理场景状态。</p>
+              <pre><code>输入：问题 / 指令 / 上下文
+输出：token_1, token_2, token_3 ... → 文本</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>Cosmos</h3>
+              <p>输出视频世界表示：diffusion 路线输出 continuous video latent；AR 路线输出 discrete visual token，再 decode 成视频帧。</p>
+              <pre><code>输入：prompt / 图像 / 短视频
+输出：video latent 或 visual tokens → decode → 视频帧</code></pre>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>2. Token 的含义不一样</h3>
+          <p>LLM 的 token 是语言符号；Cosmos 的 token/latent 是视觉压缩表示。Cosmos Tokenizer 会把视频压到时空 latent/token 网格里。例如 AR pipeline 里，生成出来的一维 token 序列会 reshape 成 <code class="inline">[B,T,H,W]</code>，再由 video tokenizer 解码成视频。这个 token 对用户不可读，代表的是局部时空视觉模式。</p>
+
+          <h3>3. 模型主干相似，但任务目标不同</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>相似点</h3>
+              <ul>
+                <li>都有 Transformer 类结构。</li>
+                <li>都可以用 cross-attention 接条件。</li>
+                <li>都可以采样生成，而不是确定性检索。</li>
+                <li>都可以用大规模预训练 + 后训练适配。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>不同点</h3>
+              <ul>
+                <li>LLM 的序列主要是一维文本序列。</li>
+                <li>Cosmos 的序列/latent 有时间、空间、高宽、通道结构。</li>
+                <li>LLM 关注语义、推理、工具调用、代码。</li>
+                <li>Cosmos 关注视觉连续性、运动、物体外观、时序世界演化。</li>
+              </ul>
+            </article>
+          </div>
+
+          <h3>4. Cosmos 里面有没有 LLM？有，但不是主生成器</h3>
+          <p>Cosmos 里有几类“语言模型相关组件”：</p>
+          <ul>
+            <li><strong>T5 text encoder：</strong><code class="inline">CosmosT5TextEncoder</code> 默认加载 <code class="inline">google-t5/t5-11b</code>，只把 prompt 编码成 hidden states，不负责输出视频。</li>
+            <li><strong>Prompt Upsampler：</strong>Text2World / Video2World 用 prompt upsampler 把输入提示词扩写或结合视觉输入生成更好的条件描述。</li>
+            <li><strong>Aegis guardrail：</strong>pre-Guard 中有 LLM-based harmful prompt blocking。</li>
+          </ul>
+          <p>这些组件的角色是<strong>条件构造和安全审查</strong>。真正生成视频世界的是 DiT diffusion 主干或 autoregressive visual-token 主干。</p>
+
+          <h3>5. 为什么 AR Cosmos 看起来像 LLM，但仍不是普通 LLM</h3>
+          <p>AR pipeline 的确很像 LLM：都有 tokenizer、vocab、Transformer、top-p、temperature、逐 token 生成。区别在于：</p>
+          <pre><code>LLM：prompt_tokens 是文本 token，生成的还是文本 token。
+Cosmos AR：prompt_tokens 包含视频上下文 token，生成的是 video tokenizer 的视觉 token。
+
+LLM decode：token ids → 文字。
+Cosmos decode：video token ids → 视频 latent/像素帧。</code></pre>
+          <p>所以 Cosmos AR 可以理解为“把 LLM 的序列建模范式搬到视频世界 token 上”，但它的知识和能力边界不在文字，而在视频时空演化。</p>
+
+          <div class="callout">最短总结：<strong>LLM 是语言世界模型；Cosmos 是视觉/物理世界视频模型。</strong>它们共享部分 Transformer 工程范式，但 Cosmos 多了视频 tokenizer、时空 latent、DiT/扩散采样、视频解码、视频安全过滤这些 LLM 没有的关键组件。</div>
+          <div class="refs">参考源码：<code class="inline">cosmos1/models/common/t5_text_encoder.py</code>、<code class="inline">cosmos1/models/diffusion/networks/general_dit.py</code>、<code class="inline">cosmos1/models/autoregressive/inference/world_generation_pipeline.py:436-690</code>、<code class="inline">cosmos1/models/autoregressive/networks/transformer.py</code>、<code class="inline">cosmos1/models/tokenizer/README.md</code>、<code class="inline">cosmos1/models/guardrail/README.md</code>。</div>

@@ -1,10 +1,37 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">C24</div><h2>Claude Code 的 harness 是什么</h2></div>
+          <p>这里的 <strong>harness</strong> 不应该理解成“模型思考模块”。在 Claude Code 源码语境里，它更接近<strong>外部自动化执行外壳</strong>：通过 settings、hooks、权限和运行时事件，把“当某件事发生时自动做什么”变成确定性的工程配置。</p>
+          <div class="callout"><strong>一句话：</strong>模型负责推理；harness 负责在固定事件点执行确定性动作，例如工具前检查、工具后记录、权限请求、停止前校验、压缩前处理。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 配置入口是 settings.json</h3>
+              <p><code class="inline">src/skills/bundled/updateConfig.ts</code> 里明确把“配置 Claude Code harness”指向 <code class="inline">settings.json</code>。自动行为需要写成 hooks；执行这些 hook 的是 harness，不是 Claude 模型自己。</p>
+              <p>常见配置层包括 <code class="inline">~/.claude/settings.json</code>、项目内 <code class="inline">.claude/settings.json</code> 和本地 <code class="inline">.claude/settings.local.json</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. Hook event 是 harness 的插槽</h3>
+              <p><code class="inline">src/schemas/hooks.ts</code> 定义了可挂载事件：<code class="inline">PreToolUse</code>、<code class="inline">PostToolUse</code>、<code class="inline">PostToolUseFailure</code>、<code class="inline">PermissionRequest</code>、<code class="inline">Stop</code>、<code class="inline">SessionStart</code>、<code class="inline">PreCompact</code>、<code class="inline">PostCompact</code>、<code class="inline">Notification</code>、<code class="inline">UserPromptSubmit</code>。</p>
+              <p>这相当于 agent 主循环暴露出的固定生命周期点。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. matcher 用权限规则语法</h3>
+              <p>Hook matcher 可以写类似 <code class="inline">Bash(git *)</code>、<code class="inline">Read(*.ts)</code> 的规则。也就是说，它可以只对某些工具、某些命令或某些文件类型生效。</p>
+              <p>这比在 prompt 里写“每次 git 前请检查”可靠，因为 hook 是运行时强制匹配和执行。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 输出可以反向影响主循环</h3>
+              <p><code class="inline">src/utils/hooks.ts</code> 会执行 command / prompt / agent / http / function hooks，并解析 JSON 输出。hook 可以增加 <code class="inline">systemMessage</code>、阻止动作、修改 <code class="inline">updatedInput</code>、给出 permission decision。</p>
+              <p>所以 harness 不是旁路日志系统，它可以真正改变工具执行和权限流。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>典型例子：</p>
+          <pre><code>模型想调用 Bash("git push")
+  → PreToolUse hook matcher 命中 Bash(git push*)
+  → harness 执行项目配置的检查脚本
+  → hook 返回 block / ask / systemMessage
+  → Claude Code 根据 hook 输出决定拒绝、请求权限或继续
+  → 如果继续，才进入工具权限和真正 Bash 执行</code></pre>
+
+          <div class="callout">核心区别：prompt 是“建议模型这么做”；harness 是“运行时在固定事件点强制执行”。因此真正需要稳定、可审计、可复用的自动化策略，应该放在 hooks / settings / permissions 里，而不是只写进对话提示。</div>
+          <div class="refs">参考文件：<code class="inline">src/skills/bundled/updateConfig.ts</code>、<code class="inline">src/utils/hooks.ts</code>、<code class="inline">src/schemas/hooks.ts</code>、<code class="inline">src/commands/hooks/*</code>、<code class="inline">src/setup.ts</code>。</div>

@@ -1,10 +1,35 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">23</div><h2>数据清洗的几个关键技巧是什么</h2></div>
+          <p>FastApply 这类代码 patch 数据，清洗重点不是“样本越多越好”，而是让每条样本都满足：<strong>diff 能复现、修改点可定位、代码能解析、训练目标不含噪声</strong>。</p>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先 replay patch。</strong> SEARCH/REPLACE 必须真的能把 <code class="inline">old_source</code> 变成 <code class="inline">new_source</code>，否则模型学到的是错编辑。</div>
+            <div class="flow-step" data-step="2"><strong>用 Hunk 行号对齐 AST。</strong> 通过 <code class="inline">Span</code>、<code class="inline">Hunk</code>、<code class="inline">ChangeContext</code> 判断改动属于 import、function、class 还是 statement。</div>
+            <div class="flow-step" data-step="3"><strong>过滤非功能改动。</strong> 纯注释、纯空白、纯 docstring、格式化大改，reward 很容易误判，训练价值低。</div>
+            <div class="flow-step" data-step="4"><strong>控制长度和 hunk 数。</strong> 太长会吃上下文，hunk 太多会把任务变成“大重写”，不适合早期 GRPO。</div>
+            <div class="flow-step" data-step="5"><strong>按文件 / repo 做 split。</strong> 不要同一个文件的相似 patch 同时出现在 train 和 test，否则评估虚高。</div>
+            <div class="flow-step" data-step="6"><strong>近重复去重。</strong> 用 signature / MinHash / LSH 去掉模板化样本，避免模型靠背答案刷 reward。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>我们项目里对应哪里</h3>
+              <ul>
+                <li><code class="inline">build/parse.py</code>：把 diff 切成 hunk，再生成 changes。</li>
+                <li><code class="inline">data/types.py</code>：Span/Hunk/UnitState/ChangeContext。</li>
+                <li><code class="inline">build/filter.py</code>：AST 规则过滤 functional/import 修改。</li>
+                <li><code class="inline">build/generate.py</code>：长度、语法、规则综合清洗。</li>
+                <li><code class="inline">build/deduplicate.py</code>：近重复去重。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>最容易踩坑</h3>
+              <ul>
+                <li>只看 diff 文本，不验证 patch 是否可应用。</li>
+                <li>把语法检查当单测：syntax 只能说明“能 parse”，不能说明逻辑正确。</li>
+                <li>随机 split 导致同 repo 同文件泄漏。</li>
+                <li>去重只按全文 exact，漏掉变量名不同但结构一样的重复样本。</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="callout">一句话：高质量清洗 = <strong>可复现编辑 + AST 定位 + 语法过滤 + 长度控制 + 去重 + 防泄漏 split</strong>。</div>

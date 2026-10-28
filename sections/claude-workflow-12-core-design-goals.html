@@ -1,10 +1,15 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">C12</div><h2>Claude Code 中 Agent 工作流编排的核心设计目标是什么？</h2></div>
+          <p>Claude Code 的 Agent 工作流编排目标，不是把任务写成固定 DAG，而是把自然语言任务稳定地转成一个可恢复、可审计、可控权限、可长时间运行的 <strong>模型-工具闭环</strong>。</p>
+          <div class="callout"><strong>一句话：</strong>LLM 负责判断“下一步做什么”，运行时负责“怎么安全、稳定、可追踪地执行这一步，并把结果闭环回模型”。</div>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card"><h3>1. 统一主循环</h3><p><code class="inline">query.ts</code> 承载主 agent、subagent、teammate 的核心循环：准备上下文 → 调模型 → 收 tool_use → 执行工具 → 回填 tool_result → 下一轮。</p></article>
+            <article class="mini-card"><h3>2. 工具调用即控制流</h3><p>模型不能直接改文件或启动 agent，只能输出 <code class="inline">tool_use</code>。运行时用 schema、权限、工具接口和 result mapping 把文本意图变成确定动作。</p></article>
+            <article class="mini-card"><h3>3. 长任务可恢复</h3><p>通过 transcript、compact、microcompact、tool result budget、max output token recovery、max turns，让长任务在上下文膨胀或中途失败后仍可继续。</p></article>
+            <article class="mini-card"><h3>4. 安全边界可控</h3><p>敏感工具经过 <code class="inline">canUseTool</code>、permission mode、plan mode、worktree isolation；子 agent 和 team 不是绕过权限，而是把权限做成运行时协议。</p></article>
+            <article class="mini-card"><h3>5. 多入口复用</h3><p>REPL、print/headless、SDK、background task、AgentTool、team swarm 都复用同一套 query/tool/task 机制，只是外层入口和输出格式不同。</p></article>
+            <article class="mini-card"><h3>6. 多 agent 工具化</h3><p><code class="inline">AgentTool</code>、<code class="inline">TeamCreate</code>、<code class="inline">SendMessage</code>、TaskList 都是工具/任务系统的一部分，多 agent 是统一协议上的扩展。</p></article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <pre><code>设计目标：
+LLM 负责策略选择
+Runtime 负责确定性执行：schema 校验、权限判断、工具执行、结果规范化、transcript、compact、错误恢复、多 agent 调度</code></pre>
+          <div class="refs">参考文件：<code class="inline">src/query.ts</code>、<code class="inline">src/QueryEngine.ts</code>、<code class="inline">src/Tool.ts</code>、<code class="inline">src/tools.ts</code>、<code class="inline">src/hooks/useCanUseTool.tsx</code>、<code class="inline">src/tools/AgentTool/AgentTool.tsx</code>。</div>

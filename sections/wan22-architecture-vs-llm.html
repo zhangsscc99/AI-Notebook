@@ -1,10 +1,60 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">WAN5</div><h2>Wan2.2 视频生成模型架构是什么，对比 LLM 多了什么组件</h2></div>
+          <p>Wan2.2 和 LLM 都大量使用 Transformer，但任务范式完全不同：LLM 是<strong>自回归 next token prediction</strong>，输入文本 token，逐个输出文本 token；Wan2.2 是<strong>视频 latent diffusion / flow matching</strong>，输入 prompt 条件和随机视频 latent，通过多步 denoising 输出视频 latent，再解码成视频。</p>
+          <div class="callout"><strong>一句话：</strong>LLM 的核心循环是“前文 token → 下一个 token”；Wan2.2 的核心循环是“noisy video latent + 文本条件 + timestep → 更干净的视频 latent”。所以视频生成模型比 LLM 多了 VAE、视频 latent、scheduler/timestep、3D patch embedding、CFG、视频时空位置编码，以及 A14B 的高/低噪声 expert 切换。</div>
+
+          <p>从源码看，Wan2.2 文生视频的主架构可以拆成这几层：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>T5 文本编码器。</strong>prompt 先进入 <code class="inline">T5EncoderModel</code>，变成 <code class="inline">context</code>。这相当于给视频模型提供语义条件，不是直接让视频 DiT 自己 tokenizer 文本。</div>
+            <div class="flow-step" data-step="2"><strong>VAE latent 空间。</strong>输出空间不是文本 token，而是 VAE 定义的视频 latent。配置里的 <code class="inline">vae_stride</code> 控制时间/空间压缩比例。</div>
+            <div class="flow-step" data-step="3"><strong>WanModel / Video DiT。</strong><code class="inline">wan/modules/model.py</code> 的 <code class="inline">WanModel</code> 用 <code class="inline">Conv3d</code> 做 3D patch embedding，把 latent 视频切成时空 token，再用多层 <code class="inline">WanAttentionBlock</code> 做建模。</div>
+            <div class="flow-step" data-step="4"><strong>timestep embedding。</strong>扩散/flow matching 每一步都有噪声时间 <code class="inline">t</code>。WanModel 用 <code class="inline">sinusoidal_embedding_1d</code>、<code class="inline">time_embedding</code>、<code class="inline">time_projection</code> 把 timestep 注入网络。</div>
+            <div class="flow-step" data-step="5"><strong>文本 cross-attention。</strong>视频 token 在 Transformer block 中通过 cross-attention 读取文本 <code class="inline">context</code>，让画面主体、动作、风格跟 prompt 对齐。</div>
+            <div class="flow-step" data-step="6"><strong>Scheduler / solver。</strong><code class="inline">FlowUniPCMultistepScheduler</code> 或 <code class="inline">FlowDPMSolverMultistepScheduler</code> 决定 timestep 序列和 latent 更新公式。LLM 通常没有这种外部采样 ODE/SDE solver。</div>
+            <div class="flow-step" data-step="7"><strong>CFG。</strong>每步同时跑正向 prompt 条件和负向/空条件，再用 <code class="inline">uncond + scale * (cond - uncond)</code> 放大提示词方向。</div>
+            <div class="flow-step" data-step="8"><strong>VAE decode。</strong>denoising 后的 latent 仍不是视频文件，必须由 VAE decoder 转成 RGB 帧，再保存成 mp4。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>和 LLM 相同的地方</h3>
+              <p>都有大规模参数、embedding、Transformer block、attention、FFN、归一化、位置编码思想。WanModel 里也有 token 序列，只是 token 来自视频 latent patch，而不是文本 tokenizer。</p>
+            </article>
+            <article class="mini-card">
+              <h3>生成方式不同</h3>
+              <p>LLM 一般按 token 顺序生成：第 1 个、第 2 个、第 3 个。Wan2.2 是全局 latent 反复迭代：同一个视频 latent 在 40/50 个 timestep 中被整体更新，逐步从噪声变清晰。</p>
+            </article>
+            <article class="mini-card">
+              <h3>输入输出载体不同</h3>
+              <p>LLM 的输入输出核心是离散文本 token；Wan2.2 的核心载体是连续视频 latent。文本只是条件，最终目标是连续的时空张量。</p>
+            </article>
+            <article class="mini-card">
+              <h3>A14B 还有 expert 切换</h3>
+              <p>T2V/I2V A14B 配置有 <code class="inline">high_noise_checkpoint</code> 和 <code class="inline">low_noise_checkpoint</code>。采样时根据 <code class="inline">boundary</code> 按 timestep 切换 expert：高噪声阶段偏整体结构，低噪声阶段偏细节。</p>
+            </article>
+          </div>
+
+          <p>如果用“LLM 对照表”记忆，差异会更清楚：</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>LLM：文本 token 管线</h3>
+              <p><code class="inline">文本 → tokenizer → token embedding + position → Transformer decoder → logits → sampling → 下一个 token</code>。循环终点是生成足够多文本 token。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Wan2.2：视频 latent 管线</h3>
+              <p><code class="inline">prompt → T5 context；随机 latent → 3D patch token + timestep → Video DiT → scheduler 更新 latent → VAE decode → mp4</code>。循环终点是 timestep 采样完成。</p>
+            </article>
+          </div>
+
+          <pre><code>Wan2.2 比典型 LLM 多出来的关键组件：
+1. T5 text encoder：单独编码 prompt
+2. VAE encoder/decoder：像素视频和 latent 互转
+3. video latent：连续时空生成空间
+4. 3D patch embedding / unpatchify：把视频 latent 转成 Transformer token 再还原
+5. timestep embedding：告诉模型当前噪声阶段
+6. scheduler / solver：控制 denoising 轨迹
+7. CFG：正向/负向条件组合，增强 prompt 对齐
+8. video RoPE：按帧、高、宽建模时空位置
+9. high/low noise experts：A14B 按去噪阶段切模型</code></pre>
+
+          <div class="callout">最短总结：<strong>Wan2.2 不是“会输出视频的 LLM”，而是“文本条件控制的视频 latent 扩散系统”。</strong>Transformer 只是中间的主干网络；围绕它还必须有 VAE、scheduler、timestep、视频 patch、CFG 和多模态条件接口。</div>
+          <div class="refs">参考源码：<code class="inline">/root/Wan2.2/wan/modules/model.py:294-520</code>、<code class="inline">/root/Wan2.2/wan/text2video.py:253-368</code>、<code class="inline">/root/Wan2.2/wan/configs/wan_t2v_A14B.py:19-37</code>、<code class="inline">/root/Wan2.2/wan/configs/wan_ti2v_5B.py:19-36</code>、<code class="inline">/root/Wan2.2/wan/modules/vae2_2.py:888-1051</code>、<code class="inline">/root/Wan2.2/generate.py:403-454</code>。</div>

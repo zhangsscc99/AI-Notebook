@@ -1,10 +1,92 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">37</div><h2>OpenClaw memory 的 sync 机制是什么，第一次没索引怎么建，session transcript 是什么</h2></div>
+          <p>这个问题要分成两部分：<strong>sync 不是“读文件”本身，而是把可检索语料同步进索引库；session transcript 不是 Markdown，而是每个会话的 JSONL 日志。</strong></p>
+          <div class="callout"><strong>一句话：</strong>第一次 <code class="inline">memory_search</code> 如果发现 SQLite/QMD 里没有任何 indexed content，会触发一次强制 sync；sync 只索引配置允许的来源，不会扫描整个项目。默认主要是 <code class="inline">MEMORY.md</code> + <code class="inline">memory/</code>，如果启用 <code class="inline">sources: ["sessions"]</code> 才会把 session transcript 历史也纳入检索。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. sync 到底干什么</h3>
+              <p>sync 的职责是把源数据变成检索索引：列文件、读文件元信息、算 hash、切 chunks、生成 embedding、写 SQLite 的 <code class="inline">files</code> / <code class="inline">chunks</code> / <code class="inline">chunks_fts</code> / <code class="inline">chunks_vec</code>，或写入 QMD collection。</p>
+              <p>所以 sync 不是把内容塞进模型上下文，也不是让模型重新读一遍；它是索引维护流程。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 第一次没索引怎么处理</h3>
+              <p><code class="inline">MemoryIndexManager.search()</code> 先调用 <code class="inline">hasIndexedContent()</code> 检查 <code class="inline">chunks</code> 或 FTS 表是否有内容。如果没有，就执行 <code class="inline">sync({ reason: "search", force: true })</code>，强制先建一次索引。</p>
+              <p>这保证 fresh process / 新库第一次问历史记忆时，不会因为后台 watcher 还没跑就直接返回空。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. 是不是对所有东西建索引</h3>
+              <p><strong>不是。</strong>OpenClaw 只索引 memorySearch 配置允许的 sources：<code class="inline">memory</code> 代表 <code class="inline">MEMORY.md</code>、<code class="inline">memory/*.md</code> 和 extraPaths；<code class="inline">sessions</code> 代表会话 transcript。源码帮助文档也建议默认保持 <code class="inline">["memory"]</code>，除非确实需要从历史聊天里召回。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 首次 force sync 会不会全量</h3>
+              <p>对当前配置范围来说，首次通常接近全量：因为索引库没有旧 hash 可对比，所有 active memory files 都需要建索引；如果 sessions source 启用，force 也会让 session files 进入同步判断。注意这个“全量”仍然只是配置语料范围内的全量，不是 repo 全量。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>一次 builtin sync 的核心流程可以这样记：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><code class="inline">memory_search</code> 进入 <code class="inline">MemoryIndexManager.search()</code>。</div>
+            <div class="flow-step" data-step="2">检查索引是否已有内容；没有就 <code class="inline">sync({ reason: "search", force: true })</code>。</div>
+            <div class="flow-step" data-step="3"><code class="inline">runSync()</code> 检查 vector extension、读取 index meta、判断是否需要 full reindex。provider、chunk 参数、sources、workspace/extraPaths 范围变化，都会触发 full reindex。</div>
+            <div class="flow-step" data-step="4">如果是 full reindex，走安全重建：临时库里重新建索引，成功后原子替换正式库，避免半成品索引污染线上检索。</div>
+            <div class="flow-step" data-step="5">如果不是 full reindex，就看 dirty / force / targeted session files：memory 文件走 <code class="inline">syncMemoryFiles()</code>，session 文件走 <code class="inline">syncSessionFiles()</code>。</div>
+            <div class="flow-step" data-step="6"><code class="inline">syncMemoryFiles()</code> 调 <code class="inline">listMemoryFiles()</code>，只列 <code class="inline">MEMORY.md</code>、<code class="inline">memory/</code>、extraPaths 中允许的 .md / multimodal 文件。</div>
+            <div class="flow-step" data-step="7">每个文件算 hash；hash 没变就跳过，hash 变了才重新 <code class="inline">indexFile()</code>。删除的文件会从 files/chunks/vector/FTS 表里 prune。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>watch sync</h3>
+              <p><code class="inline">ensureWatcher()</code> 监听 <code class="inline">MEMORY.md</code>、<code class="inline">memory/</code> 和 extraPaths。add/change/unlink 后标记 <code class="inline">dirty = true</code>，再按 debounce 延迟触发 <code class="inline">sync({ reason: "watch" })</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>interval sync</h3>
+              <p>如果配置了 <code class="inline">sync.intervalMinutes</code>，会定时跑 <code class="inline">sync({ reason: "interval" })</code>，用于补偿 watcher 失效或外部批量修改。</p>
+            </article>
+            <article class="mini-card">
+              <h3>search sync</h3>
+              <p>搜索时如果索引为空，会同步建索引；如果已有索引但 dirty，<code class="inline">startAsyncSearchSync()</code> 可异步刷新，当前搜索不一定阻塞等待全部重建。</p>
+            </article>
+            <article class="mini-card">
+              <h3>session delta sync</h3>
+              <p>session transcript 更新不会每追加一行都立刻重建索引。它通过 <code class="inline">onSessionTranscriptUpdate()</code>、5 秒 debounce、deltaBytes / deltaMessages 阈值来批量同步。</p>
+            </article>
+          </div>
+
+          <p>session transcript 本质是什么？</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>1. 它不是 Markdown</h3>
+              <p>session transcript 是 <strong>JSONL 文件</strong>，常见路径类似 <code class="inline">~/.openclaw/agents/&lt;agentId&gt;/sessions/&lt;sessionId&gt;.jsonl</code>。每一行是一条 JSON 记录。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 第一行是 session header</h3>
+              <p>新 transcript 会写入 <code class="inline">{ type: "session", version, id, timestamp, cwd }</code>。这里的 <code class="inline">timestamp</code> 是 ISO 字符串，记录会话文件创建时间。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. 后续行是 message record</h3>
+              <p>每条消息通常是 <code class="inline">{ type: "message", id, parentId, timestamp, message }</code>。外层 <code class="inline">timestamp</code> 也是 ISO 字符串；<code class="inline">message</code> 里可能还有 role、content、provider、model、usage、stopReason、message.timestamp 等字段。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. session store 也记录生命周期时间</h3>
+              <p><code class="inline">sessions.json</code> / session store 里的 entry 会记录 <code class="inline">updatedAt</code>、<code class="inline">sessionStartedAt</code>、<code class="inline">lastInteractionAt</code> 等毫秒时间戳，用于 reset、prune、路由和活跃度判断。</p>
+            </article>
+          </div>
+
+          <p>一个简化 transcript 长这样：</p>
+          <pre><code>{"type":"session","version":1,"id":"sess_abc","timestamp":"2026-05-21T10:00:00.000Z","cwd":"/repo"}
+{"type":"message","id":"m1","parentId":null,"timestamp":"2026-05-21T10:00:05.000Z","message":{"role":"user","content":"记住 repo 是 zhangsscc00/knowledge_management"}}
+{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-05-21T10:00:08.000Z","message":{"role":"assistant","content":[{"type":"text","text":"已记录。"}],"provider":"openclaw","model":"..."}}</code></pre>
+
+          <p>但它进入 memory index 时，不是原封不动把 JSONL 当 Markdown 切块。源码里的 <code class="inline">buildSessionEntry()</code> 会做一层转换：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">读取 <code class="inline">*.jsonl</code>，逐行 JSON.parse。</div>
+            <div class="flow-step" data-step="2">只保留 <code class="inline">type = "message"</code> 且 role 是 <code class="inline">user</code> / <code class="inline">assistant</code> 的内容。</div>
+            <div class="flow-step" data-step="3">过滤 inter-session provenance、dreaming narrative、cron run、silent reply、内部包装等噪声。</div>
+            <div class="flow-step" data-step="4">抽取文本、redact 工具敏感信息，把它渲染成 <code class="inline">User: ...</code> / <code class="inline">Assistant: ...</code> 这种可检索纯文本。</div>
+            <div class="flow-step" data-step="5">保留 <code class="inline">lineMap</code>，把检索文本行映射回原 JSONL 行号；同时保留 <code class="inline">messageTimestampsMs</code>，把消息时间转成 epoch ms。</div>
+            <div class="flow-step" data-step="6">最后按普通内容进入 <code class="inline">indexFile()</code>：chunk、embedding、FTS/vector/QMD。</div>
+          </div>
+
+          <div class="callout">关键区别：<strong>session transcript 是原始会话日志；session-memory hook 生成的 <code class="inline">memory/YYYY-MM-DD-HHMM.md</code> 才是 Markdown 记忆文件。</strong>前者是 JSONL，偏完整、偏日志；后者是 Markdown，偏长期、偏可读、偏可维护。是否检索 transcript，取决于 memorySearch sources 是否包含 <code class="inline">sessions</code>。</div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/memory/manager.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-sync-ops.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-session-reindex.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-atomic-reindex.ts</code>、<code class="inline">packages/memory-host-sdk/src/host/internal.ts</code>、<code class="inline">packages/memory-host-sdk/src/host/session-files.ts</code>、<code class="inline">src/config/sessions/transcript-append.ts</code>、<code class="inline">src/config/sessions/transcript.ts</code>、<code class="inline">src/config/sessions/session-file.ts</code>、<code class="inline">src/config/schema.help.ts</code></div>

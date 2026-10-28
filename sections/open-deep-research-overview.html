@@ -1,10 +1,88 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">ODR1</div><h2>概览介绍 Open Deep Research Agent</h2></div>
+          <p><strong>Open Deep Research Agent</strong> 不是整个 smolagents 框架本身，而是 Hugging Face 在 smolagents 仓库里的一个 Deep Research 复刻型示例项目。源码现在按实际目标 sparse clone 到服务器：<code class="inline">/root/open_deep_research/examples/open_deep_research</code>。原先误 clone 的 <code class="inline">/root/smolagents</code> 已删除。</p>
+          <div class="callout"><strong>一句话：</strong>它是一个“研究型多工具 agent team”：上层 <code class="inline">CodeAgent</code> 负责拆题、规划、调用视觉/文档工具、整合答案；下层 <code class="inline">ToolCallingAgent</code> 作为 <code class="inline">search_agent</code> 专门负责联网搜索、打开网页、翻页、页内查找、查 Wayback 归档和检查文件。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 项目定位：开源 Deep Research 复刻</h3>
+              <p><code class="inline">README.md</code> 写得很直接：这是对 OpenAI Deep Research 的开源复刻尝试，目标是在复杂研究任务上接近类似效果。README 里还给了 GAIA validation 的成绩描述：该 agent 达到 <code class="inline">55% pass@1</code>，对比原 Deep Research 的 <code class="inline">67%</code>。</p>
+              <p>所以它不是“通用 agent 框架介绍”，而是一个面向<strong>复杂问答、网页研究、文件理解、GAIA benchmark</strong> 的具体 agent 应用。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 入口：run.py</h3>
+              <p><code class="inline">run.py</code> 是普通使用入口：命令行读入 <code class="inline">question</code> 和 <code class="inline">--model-id</code>，调用 <code class="inline">create_agent(model_id)</code> 组装 agent，然后执行 <code class="inline">agent.run(args.question)</code>。</p>
+              <p>默认模型是 <code class="inline">o1</code>。源码里通过 <code class="inline">LiteLLMModel</code> 接模型，并在 <code class="inline">model_id == "o1"</code> 时设置 <code class="inline">reasoning_effort="high"</code> 和 <code class="inline">max_completion_tokens=8192</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. 上层 manager：CodeAgent</h3>
+              <p><code class="inline">create_agent()</code> 里最终返回的是 <code class="inline">manager_agent = CodeAgent(...)</code>。它的工具是 <code class="inline">visualizer</code> 和 <code class="inline">TextInspectorTool</code>，同时挂了一个 managed agent：<code class="inline">text_webbrowser_agent</code>。</p>
+              <p>这意味着上层 agent 不是只会搜索网页。它能写 Python action，把“调用搜索子 agent、检查文件、看图片、整理证据、计算答案”组织成一个可执行过程。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 下层 search_agent：ToolCallingAgent</h3>
+              <p><code class="inline">text_webbrowser_agent = ToolCallingAgent(...)</code> 是专职网页研究员。它的 <code class="inline">name</code> 是 <code class="inline">search_agent</code>，描述明确要求：需要浏览网页的问题都交给它，并且调用时要给完整自然语言任务，不要只给关键词。</p>
+              <p>它设置 <code class="inline">max_steps=20</code>、<code class="inline">planning_interval=4</code>、<code class="inline">provide_run_summary=True</code>，所以它会多轮搜索并把结果摘要回传给上层 manager。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>核心工作流可以按线性顺序这样理解：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">用户运行 <code class="inline">python run.py --model-id o1 "问题"</code>，<code class="inline">parse_args()</code> 取得问题和模型名。</div>
+            <div class="flow-step" data-step="2"><code class="inline">create_agent()</code> 创建 <code class="inline">LiteLLMModel</code>，配置 role conversion、token 上限；o1 额外启用 high reasoning。</div>
+            <div class="flow-step" data-step="3">创建 <code class="inline">SimpleTextBrowser</code>：设置 viewport、下载目录、User-Agent、timeout、cookies，并把网页转成适合 agent 阅读的文本视口。</div>
+            <div class="flow-step" data-step="4">组装网页工具列表：<code class="inline">GoogleSearchTool</code>、<code class="inline">VisitTool</code>、<code class="inline">PageUpTool</code>、<code class="inline">PageDownTool</code>、<code class="inline">FinderTool</code>、<code class="inline">FindNextTool</code>、<code class="inline">ArchiveSearchTool</code>、<code class="inline">TextInspectorTool</code>。</div>
+            <div class="flow-step" data-step="5">创建 <code class="inline">ToolCallingAgent</code> 作为 <code class="inline">search_agent</code>，它负责“找资料”，包括搜索、打开网页、查网页内关键词、翻页、读取 pdf/doc/xlsx 等文件文本。</div>
+            <div class="flow-step" data-step="6">创建上层 <code class="inline">CodeAgent</code> 作为 manager，挂载视觉工具、文档检查工具和 <code class="inline">search_agent</code>。</div>
+            <div class="flow-step" data-step="7">执行 <code class="inline">agent.run(question)</code>。manager 先理解问题，必要时把搜索任务委托给 <code class="inline">search_agent</code>，拿到网页证据后继续推理。</div>
+            <div class="flow-step" data-step="8">如果问题带文件，GAIA 入口 <code class="inline">run_gaia.py</code> 会先用 <code class="inline">get_single_file_description()</code> / <code class="inline">get_zip_description()</code> 生成文件说明，再把说明拼进增强问题。</div>
+            <div class="flow-step" data-step="9">最后由 manager 输出答案；GAIA 评测路径还会调用 <code class="inline">prepare_response()</code>，把完整 agent 轨迹再压成符合 benchmark 格式的 <code class="inline">FINAL ANSWER</code>。</div>
+          </div>
+
+          <pre><code>from run import create_agent
+
+agent = create_agent(model_id="o1")
+answer = agent.run("How many studio albums did Mercedes Sosa release before 2007?")
+print(answer)</code></pre>
+
+          <p>它的工具层不是简单“网页搜索 API”。源码里拆得很细：</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>搜索和网页浏览</h3>
+              <p><code class="inline">scripts/text_web_browser.py</code> 定义 <code class="inline">SimpleTextBrowser</code>。它维护地址历史、页面标题、当前 viewport、分页边界，并把网页内容切成固定大小视口。<code class="inline">VisitTool</code> 负责打开 URL，<code class="inline">PageUpTool</code> / <code class="inline">PageDownTool</code> 负责翻页。</p>
+            </article>
+            <article class="mini-card">
+              <h3>页内定位</h3>
+              <p><code class="inline">FinderTool</code> 和 <code class="inline">FindNextTool</code> 对应类似 Ctrl+F 的能力。它们不是把整页全部塞给模型，而是让模型在长网页中逐页定位关键词，减少上下文浪费。</p>
+            </article>
+            <article class="mini-card">
+              <h3>归档网页</h3>
+              <p><code class="inline">ArchiveSearchTool</code> 调 Wayback Machine，输入 URL 和日期，找接近目标日期的历史快照。这对研究类任务很重要，因为很多答案依赖某个历史时点的页面内容。</p>
+            </article>
+            <article class="mini-card">
+              <h3>文件理解</h3>
+              <p><code class="inline">TextInspectorTool</code> 用 <code class="inline">MarkdownConverter</code> 把 html、xlsx、pptx、音频、pdf、docx 和文本类文件转成 markdown/text，再用模型根据问题生成摘要或回答。<code class="inline">visualizer</code> 则处理图片问答。</p>
+            </article>
+          </div>
+
+          <p>它的 GAIA 评测入口比普通 <code class="inline">run.py</code> 多几层工程化处理：</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>run_gaia.py：批量评测</h3>
+              <p><code class="inline">run_gaia.py</code> 支持 <code class="inline">--concurrency</code>、<code class="inline">--run-name</code>、<code class="inline">--set-to-run</code>。它用 <code class="inline">ThreadPoolExecutor</code> 并发跑题，把每题结果追加写入 <code class="inline">output/{set}/{run_name}.jsonl</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>数据集加载</h3>
+              <p><code class="inline">load_gaia_dataset()</code> 会下载 <code class="inline">gaia-benchmark/GAIA</code> 或 <code class="inline">smolagents/GAIA-annotated</code>，把列重命名成 <code class="inline">question</code>、<code class="inline">true_answer</code>、<code class="inline">task</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>附件预处理</h3>
+              <p><code class="inline">scripts/run_agents.py</code> 里 <code class="inline">get_single_file_description()</code> 会根据扩展名区分图片、pdf/xls/doc、音频和普通文件；zip 会先解压，再逐个文件生成说明。</p>
+            </article>
+            <article class="mini-card">
+              <h3>最终答案重写</h3>
+              <p><code class="inline">scripts/reformulator.py</code> 的 <code class="inline">prepare_response()</code> 会读取完整 agent 轨迹，要求模型输出严格的 <code class="inline">FINAL ANSWER: ...</code>。这是为了适配 GAIA 这种只看最终短答案的评测。</p>
+            </article>
+          </div>
+
+          <div class="callout">最短总结：<strong>Open Deep Research Agent = smolagents 上构建的研究型双层 agent。</strong>上层 <code class="inline">CodeAgent</code> 管全局推理和答案整合；下层 <code class="inline">ToolCallingAgent</code> 管网页研究；浏览器、文件转换、视觉问答、归档网页和 GAIA 评测脚本共同组成一个面向复杂研究任务的可复现实验系统。</div>
+          <div class="refs">本地源码：<code class="inline">/root/open_deep_research/examples/open_deep_research</code>。参考文件：<code class="inline">README.md</code>、<code class="inline">run.py</code>、<code class="inline">run_gaia.py</code>、<code class="inline">app.py</code>、<code class="inline">scripts/text_web_browser.py</code>、<code class="inline">scripts/text_inspector_tool.py</code>、<code class="inline">scripts/run_agents.py</code>、<code class="inline">scripts/reformulator.py</code>、<code class="inline">scripts/visual_qa.py</code>。</div>

@@ -1,10 +1,22 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">VRAG5</div><h2>VRAG 检索召回几个，topK 在哪里配置</h2></div>
+          <p>默认召回数量是 <strong>topK=3</strong>，但不同入口配置位置不一样。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>SearchEngine 默认</h3>
+              <p><code class="inline">SearchEngine.search(self, queries, top_k=3)</code> 默认 topK 是 3。代码还会做 <code class="inline">top_k = min(top_k, len(file_data_list))</code>，防止请求数量超过索引长度。</p>
+            </article>
+            <article class="mini-card">
+              <h3>FastAPI 默认</h3>
+              <p><code class="inline">search_engine_api.py</code> 从请求 body 读取 <code class="inline">top_k = body.get("top_k", 3)</code>，所以 API 不传时也是 3。</p>
+            </article>
+            <article class="mini-card">
+              <h3>VRAG demo</h3>
+              <p><code class="inline">demo/vrag_agent.py</code> 的 <code class="inline">search()</code> 写死请求 <code class="inline">{"queries": query, "top_k": 3}</code>。也就是说经典 VRAG demo 每次 search 默认拿 3 张候选图。</p>
+            </article>
+            <article class="mini-card">
+              <h3>VimRAG demo</h3>
+              <p><code class="inline">VimRAG.__init__</code> 的 <code class="inline">search_top_k=3</code>，Streamlit UI 里 Search Top-K slider 范围是 1 到 10，默认 3。注意 VimRAG 还有一个 memory top_k=5，用于多模态记忆回填，不是检索召回 topK。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <div class="callout">结论：<strong>VRAG 当前默认检索召回 3 个候选。</strong>如果要改，API 层可以传 <code class="inline">top_k</code>，VimRAG UI 可调；经典 <code class="inline">vrag_agent.py</code> 需要改源码里的 <code class="inline">top_k: 3</code>。</div>
+          <div class="refs">参考：<code class="inline">/root/VRAG/search_engine/search_engine.py:281</code>、<code class="inline">/root/VRAG/search_engine/search_engine_api.py:19</code>、<code class="inline">/root/VRAG/demo/vrag_agent.py:59-65</code>、<code class="inline">/root/VRAG/demo/vimrag_agent.py:30</code>、<code class="inline">/root/VRAG/demo/vimrag_app.py:759-764</code>。</div>

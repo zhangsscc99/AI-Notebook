@@ -1,10 +1,50 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">32</div><h2>MinT 能不能做多模态大模型后训练</h2></div>
+          <p>结论先说：<strong>可以把 MinT 当成后训练执行层，但当前仓库里能直接证实的是“token 化的 LoRA / GRPO / SFT 训练”</strong>；对于多模态模型，是否能直接训，要看你的模型接口和数据管线能不能把图像、视频、音频先变成 MinT 后端能接收的输入形式。当前这些脚本没有展示专门的视觉字段、图像 processor 或多模态 datum 构造，所以不要默认它开箱即支持所有多模态形态。</p>
+          <div class="callout"><strong>一句话：</strong>MinT 更像“远程后训练服务”；你可以用它做多模态后训练，但前提是你先把多模态样本整理成它能吃的训练表示，并确认后端模型/SDK 支持对应输入与可训练模块。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先分清两件事。</strong>“能不能做后训练”和“能不能直接喂原始图片/视频”不是一回事。前者从当前源码看是肯定的，后者没有在现有脚本里被直接展示。</div>
+            <div class="flow-step" data-step="2"><strong>MinT 当前暴露的是文本式 Datum。</strong><code class="inline">simple_mint_sft.py</code> 和 <code class="inline">train_mint_fastapply_grpo.py</code> 都是在构造 <code class="inline">types.Datum</code>，核心是 <code class="inline">model_input</code> + <code class="inline">loss_fn_inputs</code>，再交给 <code class="inline">forward_backward()</code> / <code class="inline">forward_backward_async()</code>。</div>
+            <div class="flow-step" data-step="3"><strong>所以多模态要先做前处理。</strong>如果你要训 VLM，通常要先把图像转成模型 processor 期望的输入，或把图文对整理成能编码成 token / feature 的表示，再映射成 MinT 可以消费的 datum。</div>
+            <div class="flow-step" data-step="4"><strong>LoRA 侧未必是问题。</strong>MinT 提供的是远程 LoRA training client，像 <code class="inline">train_attn=True</code>、<code class="inline">train_mlp=True</code>、<code class="inline">train_unembed=True</code> 这种开关，说明它至少能做基座模型的参数高效后训练；但是否能覆盖 vision encoder、cross-attn、multimodal projector，要看具体模型与服务端支持。</div>
+            <div class="flow-step" data-step="5"><strong>奖励设计可以继续用 GRPO 风格。</strong>如果你的多模态任务有 verifier，比如 OCR 准确率、VQA 正确率、图文一致性分数、检测框 IoU，那么就可以像现在的 FastApply 一样，先采样多条 rollout，再按 group baseline 算 advantage。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>适合 MinT 的多模态后训练场景</h3>
+              <p>如果你的目标是“把多模态模型做后训练”，而不是自己搭一整套分布式训练底座，MinT 很适合拿来做 LoRA 式的 SFT / GRPO / verifier-guided post-training。前提是你的样本已经是服务端能理解的输入格式。</p>
+            </article>
+            <article class="mini-card">
+              <h3>不适合直接赌的地方</h3>
+              <p>不要直接假设它能吃原始图片字节、视频帧序列或任意自定义 tensor。当前仓库里没有看到面向图像/视频的 datum 结构、processor 注入点或 vision-module 专用训练开关。</p>
+            </article>
+            <article class="mini-card">
+              <h3>你要自己补的部分</h3>
+              <p>多模态后训练通常要你自己补三层：数据转换层，把原始样本转成训练输入；reward/verifier 层，定义任务指标；模型接口层，确认 MinT 后端支持对应 backbone 和可训练模块。</p>
+            </article>
+            <article class="mini-card">
+              <h3>最稳的落地方式</h3>
+              <p>先做一个小的后训练 smoke test：固定 backbone，先用图文配对做 SFT 验证链路，再加 verifier reward 做 group-relative 优化。这样能先确认“能训”，再确认“训得值不值”。</p>
+            </article>
+          </div>
+
+          <pre><code>多模态后训练的 MinT 落地思路
+
+raw multimodal sample
+  -> image/video/audio preprocessing
+  -> model-specific processor / tokenizer
+  -> build MinT Datum
+  -> optional reward / verifier
+  -> forward_backward(loss_fn="cross_entropy" or "importance_sampling")
+  -> optim_step(AdamParams)
+  -> save LoRA weights
+
+关键判断：
+  - MinT 能否接收你的输入表示？
+  - 后端模型是否支持你要训练的多模态模块？
+  - 你的 reward 是否可以被稳定验证？
+  - 先做 SFT smoke，还是直接做 GRPO 风格后训练？</code></pre>
+
+          <div class="callout">所以对你的问题，最稳的答案是：<strong>能用 MinT 做多模态后训练，但不要把它理解成“原生多模态训练平台”。</strong>你更应该把它当成一个后训练执行器，前面的多模态数据表示、reward/verifier、以及是否训练 vision 相关模块，需要你自己把链路补齐并验证。</div>
+          <div class="refs">参考：<code class="inline">/root/rlhf/mint_simple_training/simple_mint_sft.py</code>、<code class="inline">/root/rlhf/fastapply_pipeline/train_mint_fastapply_grpo.py</code>、<code class="inline">/root/rlhf/reports/rl_master_72_image_reproduction_report.md</code>、<code class="inline">/root/rlhf/reports/rl_master_72_image_mapping.json</code>。</div>

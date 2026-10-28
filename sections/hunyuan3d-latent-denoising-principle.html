@@ -1,10 +1,47 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">HY3D7</div><h2>3D latent 迭代去噪是什么原理</h2></div>
+          <p><strong>3D latent 迭代去噪</strong>的核心是：先不要直接生成 mesh，而是在 ShapeVAE 定义的连续 3D 隐空间里，从一团随机噪声 latent 出发，经过很多步把它推向“像真实 3D 物体”的 clean shape latent。</p>
+          <div class="callout"><strong>一句话：</strong>混元3D 的 DiT 每一步不是输出最终 3D 模型，而是看当前 noisy latent、时间步 t、图片条件，预测“这个 latent 应该往哪个方向移动”；scheduler 用这个方向更新 latent，多步之后才得到 clean latent。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>训练时有 clean latent。</strong>Hunyuan3D-2.1 训练代码里，真实 3D surface 会先通过 <code class="inline">ShapeVAE.encode(surface)</code> 编成 clean latent，记作 <code class="inline">x1</code>。</div>
+            <div class="flow-step" data-step="2"><strong>再采样噪声 latent。</strong><code class="inline">transport.sample(x1)</code> 里用 <code class="inline">x0 = randn_like(x1)</code> 生成随机噪声 latent。</div>
+            <div class="flow-step" data-step="3"><strong>构造中间状态 xt。</strong><code class="inline">ICPlan.compute_mu_t()</code> 的线性路径可以理解为 <code class="inline">xt = t * x1 + (1 - t) * x0</code>：t 越小越像噪声，t 越大越像真实 3D latent。</div>
+            <div class="flow-step" data-step="4"><strong>模型学会预测移动方向。</strong><code class="inline">training_losses()</code> 把 <code class="inline">xt</code>、<code class="inline">t</code> 和图片条件送入模型，模型输出一个与 latent 同形状的向量，并用 MSE 对齐目标方向 <code class="inline">ut</code>。</div>
+            <div class="flow-step" data-step="5"><strong>推理时反过来走。</strong>推理没有真实 <code class="inline">x1</code>，所以从随机 latent 开始；每一步 DiT 预测方向，scheduler 通过欧拉步更新 latent，逐步接近 clean shape latent。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么不直接生成 mesh</h3>
+              <p>mesh 是可变拓扑的顶点/面集合，长度不固定，很难像文本 token 一样直接生成。latent 是固定形状的连续张量，适合 Transformer/DiT 做并行建模和多步去噪。</p>
+            </article>
+            <article class="mini-card">
+              <h3>图片条件起什么作用</h3>
+              <p>图片经 DINO/CLIP encoder 变成 condition tokens。DiT 预测每一步 latent 移动方向时，会结合这些条件，让 latent 往“符合输入图片的 3D 物体”方向走。</p>
+            </article>
+            <article class="mini-card">
+              <h3>迭代去噪和 LLM 有什么不同</h3>
+              <p>LLM 是把 token 一个一个 append 到序列后面；3D latent 去噪是同一个 latent tensor 被反复整体修改。它不是生成第 1 个顶点、第 2 个顶点，而是整块 3D 表示逐步 refinement。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么要很多步</h3>
+              <p>一步从纯噪声跳到好 3D 很难。flow matching 把这个难问题拆成很多小步，每一步只预测局部方向，最终轨迹更稳定。</p>
+            </article>
+          </div>
+
+          <pre><code>训练：
+clean 3D surface -> ShapeVAE.encode -> clean latent x1
+noise latent x0 = randn_like(x1)
+xt = interpolate(x0, x1, t)
+DiT(xt, t, image_condition) -> velocity target
+loss = MSE(pred, target)
+
+推理：
+latent = random noise
+for t in timesteps:
+    direction = DiT(latent, t, image_condition)
+    latent = scheduler.step(direction, t, latent)
+mesh = ShapeVAE.latents2mesh(latent)</code></pre>
+
+          <div class="callout">最短记忆：<strong>3D latent 迭代去噪 = 在固定形状的 3D 隐空间里走一条从噪声到真实物体的轨迹。</strong>DiT 负责预测方向，scheduler 负责按时间步更新 latent。</div>
+          <div class="refs">参考源码：<code class="inline">/root/Hunyuan3D-2.1/hy3dshape/hy3dshape/models/diffusion/transport/transport.py:138-183</code>、<code class="inline">/root/Hunyuan3D-2.1/hy3dshape/hy3dshape/models/diffusion/transport/path.py:139-162</code>、<code class="inline">/root/Hunyuan3D-2/hy3dgen/shapegen/pipelines.py:740-759</code>。</div>

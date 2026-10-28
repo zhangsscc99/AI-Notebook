@@ -1,10 +1,28 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">DSH3</div><h2>如何运行、接入 SDK 和扩展 Harness</h2></div>
+
+          <p>DeepSeek Harness 提供多个入口：本地 Web UI、headless runner、TypeScript / Python SDK，以及自动化用的 ACP profile。第一次使用建议从 npm 包和 Web UI 开始。</p>
+
+          <h3>最快启动</h3>
+          <pre><code>npx @deepseek-ai/dsh web</code></pre>
+          <p>命令默认在 <code class="inline">http://127.0.0.1:3080</code> 启动 Web UI。通过 SSH 运行时可使用 <code class="inline">--no-open</code> 避免尝试打开远端浏览器。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card"><h3>1. 配置模型</h3><p>在 Web UI 的 Settings → Models 中填写 DeepSeek API key。模型路由保存后即可使用。</p></article>
+            <article class="mini-card"><h3>2. 选择 workspace</h3><p>添加并选择允许 Agent 访问的项目目录。未选择 workspace 时，部分 Web UI 操作不可用。</p></article>
+            <article class="mini-card"><h3>3. 运行任务</h3><p>创建 Session，让 Agent 阅读、修改和执行。需要审批的操作遵循当前权限策略。</p></article>
+            <article class="mini-card"><h3>4. 审查变化</h3><p>把 Agent 的改动当成外部变更检查：看 diff、运行测试，再决定是否保留。</p></article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>从源码构建</h3>
+          <pre><code>git clone https://github.com/deepseek-ai/deepseek-harness.git
+cd deepseek-harness
+pnpm install
+pnpm run build
+pnpm dsh web</code></pre>
+
+          <h3>SDK 与扩展路径</h3>
+          <p>SDK 不是另一套 Agent 实现，而是通过同一 launcher 启动 <code class="inline">sdk</code> profile，并暴露 JSON-RPC 调用。扩展产品行为时，优先新增插件：新模型 provider 注册到 <code class="inline">ctx.llm</code>，模型可见能力注册到 <code class="inline">ctx.tools</code>，本地或远程执行环境分别实现 shell、fs、sandbox seam。</p>
+
+          <div class="callout"><strong>安全边界：</strong>Harness 可以执行真实命令、修改文件并调用外部工具。先阅读官方 <code class="inline">SAFETY.zh.md</code>，在隔离工作区中运行，并为审批、凭据和沙箱设置明确边界。</div>
+
+          <div class="refs">事实来源：DeepSeek Harness 官方 README、Web UI Guide 与 <code class="inline">docs/architecture.zh.md</code>。项目当前处于 Developer Preview。</div>

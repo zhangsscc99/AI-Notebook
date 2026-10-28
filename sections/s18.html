@@ -1,10 +1,27 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">18</div><h2>每次记忆检索全流程</h2></div>
+          <p>一次完整的“记忆检索”通常不是单个动作，而是 <code class="inline">memory_search</code> 和 <code class="inline">memory_get</code> 的组合。</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">工具可用性检查：memory-core 注册工具时，会确认当前 agent 配置里 memorySearch 没被禁用。</div>
+            <div class="flow-step" data-step="2">模型先调用 <code class="inline">memory_search</code>，传入自然语言 query，例如“之前我们怎么配置 QMD”。</div>
+            <div class="flow-step" data-step="3">系统拿到 active memory manager。如果 backend 是 QMD，就走 QMD manager；否则走 builtin SQLite manager。</div>
+            <div class="flow-step" data-step="4">如果索引为空，先强制 <code class="inline">sync({ reason: "search", force: true })</code>，把磁盘文件建成可搜索索引。</div>
+            <div class="flow-step" data-step="5">执行 preflight：空 query 或无索引内容直接停止，避免无意义 provider 初始化和查询。</div>
+            <div class="flow-step" data-step="6">如果可以搜索，初始化 embedding provider，然后并行/组合执行 FTS keyword search 和 vector search。</div>
+            <div class="flow-step" data-step="7">把 keyword 和 vector 结果做 hybrid merge，应用 minScore、maxResults、MMR、temporal decay 等策略。</div>
+            <div class="flow-step" data-step="8">工具返回候选片段，包括 path、startLine、endLine、score、snippet、source。</div>
+            <div class="flow-step" data-step="9">模型再用 <code class="inline">memory_get</code> 按 path/from/lines 读取原文，避免只凭 snippet 回答。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>所以实际链路可以理解为：</p>
+          <pre><code>user question
+  -> memory_search(query)
+  -> manager.search()
+  -> sync if needed
+  -> preflight
+  -> FTS + vector retrieval
+  -> hybrid merge
+  -> search results
+  -> memory_get(path, from, lines)
+  -> exact excerpt
+  -> answer with grounded context</code></pre>
+          <div class="callout">RAG 通常对应第 2 到第 8 步；而 OpenClaw 还额外强调第 9 步，也就是用 <code class="inline">memory_get</code> 回读原文，降低只看片段摘要造成的误判。</div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/tools.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager.ts:302-491</code>、<code class="inline">packages/memory-host-sdk/src/host/read-file.ts</code></div>

@@ -1,10 +1,28 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">20</div><h2>QMD 是什么</h2></div>
+          <p><code class="inline">QMD</code> 不是 memory 文件本身，也不是某一个 embedding 模型。它是 OpenClaw 可选的<strong>本地优先搜索 sidecar / 后端引擎</strong>：OpenClaw 把要检索的记忆、额外目录、可选 session transcript 交给 QMD 建 collection，然后通过 <code class="inline">qmd search</code>、<code class="inline">qmd query</code> 等子进程接口取回结果。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>和 builtin 后端的区别</h3>
+              <p>builtin 后端是在 OpenClaw 进程内用 SQLite、FTS、向量索引维护 memory。QMD 后端则把索引更新、BM25 搜索、向量搜索、reranking、query expansion 交给外部 <code class="inline">qmd</code> 工具处理。</p>
+            </article>
+            <article class="mini-card">
+              <h3>默认模式不是语义搜索</h3>
+              <p>OpenClaw 的 QMD 默认 <code class="inline">searchMode</code> 是 <code class="inline">search</code>，也就是 BM25 词法搜索。这个模式下它不会主动维护 semantic embedding。只有 <code class="inline">vsearch</code> 或 <code class="inline">query</code> 才会进入更语义化的路径。</p>
+            </article>
+            <article class="mini-card">
+              <h3>QMD home 和 collection</h3>
+              <p>启用后，OpenClaw 会在 <code class="inline">~/.openclaw/agents/&lt;agentId&gt;/qmd/</code> 下管理 QMD home，并从 <code class="inline">MEMORY.md</code>、<code class="inline">memory/</code>、配置的额外路径、可选 session transcript 创建 collection。</p>
+            </article>
+            <article class="mini-card">
+              <h3>失败时的行为</h3>
+              <p>如果 QMD 不可用、二进制缺失或 sidecar 失败，OpenClaw 会回退到 builtin SQLite memory engine，避免单次 QMD 故障直接让 memory 搜索完全不可用。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>启用 QMD 的最小配置类似这样：</p>
+          <pre><code>{
+  memory: {
+    backend: "qmd"
+  }
+}</code></pre>
+          <div class="callout">一句话：QMD 是“把 memory 检索外包给一个更强的本地搜索引擎”。它可以做 BM25、vector search、reranking、query expansion，也可以索引 workspace memory 之外的本地资料。</div>
+          <div class="refs">参考：<code class="inline">docs/concepts/memory-qmd.md</code>、<code class="inline">packages/memory-host-sdk/src/host/backend-config.ts</code></div>

@@ -1,10 +1,121 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">JEPA1</div><h2>概览 EB-JEPA 项目：架构、世界模型路线、和大语言模型的区别</h2></div>
+          <p><strong>EB-JEPA</strong> 是 Meta FAIR 开源的 <strong>Energy-Based Joint-Embedding Predictive Architecture</strong> 教学与实验库。它不是一个聊天模型项目，而是围绕“<strong>在表征空间预测未来，并用这个预测能力做规划</strong>”来组织代码：把图片/视频/环境观测编码成 latent representation，再训练 predictor 在 latent 空间预测未来状态，最后用 CEM / MPPI 这类规划器搜索动作序列。</p>
+          <div class="callout"><strong>一句话：</strong>LLM 学的是“给定文本上下文，下一个 token 是什么”；EB-JEPA 学的是“给定当前世界观测和动作，未来世界状态的表示应该是什么”。它的核心输出不是文字 token，而是未来视觉/状态 embedding，以及基于 embedding 距离定义的 planning cost。</div>
+
+          <h3>1. 这个 repo 主要包含什么</h3>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>Image JEPA / JEA</h3>
+              <p><code class="inline">examples/image_jepa</code> 在 CIFAR-10 无标签图片上做自监督表征学习。README 里也说明这里更像 JEA：单图增强视图之间学不变表示，核心是 encoder + projector + VICReg/SIGReg 类防坍塌损失，不强调时间预测。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Video JEPA</h3>
+              <p><code class="inline">examples/video_jepa</code> 用 Moving MNIST 视频序列训练模型预测未来帧的 representation。它不是直接预测像素，而是先把帧编码成 latent，再在 latent 里预测未来。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Action-Conditioned Video JEPA</h3>
+              <p><code class="inline">examples/ac_video_jepa</code> 是最接近“世界模型”的部分：Two Rooms 环境里，模型根据当前图像状态和动作预测下一状态表示，然后 planner 用模型想象动作后果，朝目标状态规划。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Planning 模块</h3>
+              <p><code class="inline">eb_jepa/planning.py</code> 实现 <code class="inline">GCAgent</code>、<code class="inline">ReprTargetDistMPCObjective</code>、<code class="inline">CEMPlanner</code>、<code class="inline">MPPIPlanner</code>。这是把 JEPA 从“会预测”变成“能规划”的关键。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>2. 核心架构：Encoder + Action Encoder + Predictor + Regularizer + Prediction Cost</h3>
+          <p>源码里的主类在 <code class="inline">eb_jepa/jepa.py</code>。<code class="inline">JEPAbase</code> 保存三个核心模块：observation encoder、action encoder、predictor；<code class="inline">JEPA</code> 再加上 regularizer 和 prediction cost 用于训练。</p>
+          <pre><code>class JEPAbase(nn.Module):
+    def __init__(self, encoder, aencoder, predictor):
+        self.encoder = encoder          # observation -> latent state
+        self.action_encoder = aencoder  # action -> action latent / identity
+        self.predictor = predictor      # latent state + action -> future latent
+
+class JEPA(JEPAbase):
+    def __init__(self, encoder, aencoder, predictor, regularizer, predcost):
+        self.regularizer = regularizer  # 防止 representation collapse
+        self.predcost = predcost        # predicted latent vs target latent</code></pre>
+          <p>训练时先把观测序列编码成 <code class="inline">state = self.encoder(observations)</code>，再让 predictor 预测未来 latent。loss 由两部分组成：</p>
+          <pre><code>state = encoder(observations)
+predicted_states = predictor(state, encoded_actions)
+loss = prediction_loss(state, predicted_states) + regularization_loss(state)</code></pre>
+
+          <h3>3. Video JEPA：在 representation 空间预测未来，而不是直接生成图片</h3>
+          <p><code class="inline">examples/video_jepa/main.py</code> 里构建模型时很清楚：</p>
+          <pre><code>encoder = ResNet5(cfg.model.dobs, cfg.model.henc, cfg.model.dstc)
+predictor_model = ResUNet(2 * cfg.model.dstc, cfg.model.hpre, cfg.model.dstc)
+predictor = StateOnlyPredictor(predictor_model, context_length=2)
+regularizer = VCLoss(cfg.loss.std_coeff, cfg.loss.cov_coeff, proj=projector)
+ploss = SquareLossSeq(projector)
+jepa = JEPA(encoder, encoder, predictor, regularizer, ploss)</code></pre>
+          <p>这里的关键是 <code class="inline">StateOnlyPredictor</code> 和 <code class="inline">SquareLossSeq</code>。模型不是学“像素 RGB 下一帧”，而是学“下一帧经过 encoder 后的 representation”。这样做的意义是：模型可以忽略像素级细节噪声，更多容量用于学习物体位置、运动趋势、动态规律。</p>
+
+          <h3>4. Action-Conditioned JEPA：真正的世界模型路线</h3>
+          <p><code class="inline">examples/ac_video_jepa/main.py</code> 里，Two Rooms 环境使用 <code class="inline">ImpalaEncoder</code> 编码图像，用 <code class="inline">RNNPredictor</code> 根据 action 推进 latent state：</p>
+          <pre><code>encoder = ImpalaEncoder(...)
+predictor = RNNPredictor(hidden_size=encoder.mlp_output_dim, final_ln=encoder.final_ln)
+aencoder = nn.Identity()
+regularizer = VC_IDM_Sim_Regularizer(...)
+ploss = SquareLossSeq()
+jepa = JEPA(encoder, aencoder, predictor, regularizer, ploss)</code></pre>
+          <p>这就是世界模型的最小闭环：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>看世界：</strong>输入当前图像观测 <code class="inline">s_t</code>。</div>
+            <div class="flow-step" data-step="2"><strong>编码世界状态：</strong><code class="inline">z_t = Encoder(s_t)</code>。</div>
+            <div class="flow-step" data-step="3"><strong>加入动作：</strong>输入动作 <code class="inline">a_t</code>，动作可以是连续控制向量。</div>
+            <div class="flow-step" data-step="4"><strong>预测未来：</strong><code class="inline">z_{t+1} = Predictor(z_t, a_t)</code>，可 autoregressive unroll 多步。</div>
+            <div class="flow-step" data-step="5"><strong>规划：</strong>枚举/采样动作轨迹，选择能让预测 latent 接近目标 latent 的动作。</div>
+          </div>
+
+          <h3>5. Planning 怎么做：不是让模型输出动作，而是搜索动作</h3>
+          <p><code class="inline">eb_jepa/planning.py</code> 里 <code class="inline">GCAgent.set_goal()</code> 会先把目标图像编码成目标 embedding：</p>
+          <pre><code>self.goal_state_enc = self.model.encode(goal_state)
+objective = ReprTargetDistMPCObjective(target_enc=self.goal_state_enc)
+self.planner.set_objective(objective)</code></pre>
+          <p>随后 planner 对很多候选动作序列做 rollout：</p>
+          <pre><code>predicted_encs = self.unroll(obs_init, actions)
+cost = objective(predicted_encs)</code></pre>
+          <p><code class="inline">ReprTargetDistMPCObjective</code> 的 cost 本质是 predicted encoding 和 goal encoding 的 MSE。<code class="inline">CEMPlanner</code> / <code class="inline">MPPIPlanner</code> 每轮采样一批动作轨迹，调用世界模型预测未来，把 cost 低的轨迹选出来更新分布，最后执行前几个动作。这就是“模型预测控制”：每一步重新看环境、重新规划。</p>
+
+          <h3>6. 为什么叫 Energy-Based</h3>
+          <p>这里的 energy 可以理解为“候选未来/候选动作的代价函数”。在 planning 里，某条动作轨迹经过 JEPA 预测后，如果未来 embedding 离目标 embedding 很近，它的 energy/cost 就低；反之就高。</p>
+          <pre><code>候选动作序列 a[0:H]
+  → JEPA imagined rollout: z_hat[1:H]
+  → energy / cost = distance(z_hat, z_goal)
+  → 选择低 energy 的动作序列</code></pre>
+          <p>这和普通生成式模型不同：它不一定要对所有未来像素建完整概率分布，也不需要像 LLM 一样输出 token 概率；它只需要学到一个好用的表示空间和预测函数，让“好未来”和“坏未来”能被 cost 区分。</p>
+
+          <h3>7. 和大语言模型的根本区别</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>LLM 路线</h3>
+              <ul>
+                <li>输入输出主要是离散文本 token。</li>
+                <li>训练目标通常是 next-token prediction。</li>
+                <li>模型最后输出 vocab logits，再采样/解码成文字。</li>
+                <li>“世界知识”隐含在语言统计和语料中。</li>
+                <li>做规划时常靠语言推理、工具调用、搜索或外部环境反馈。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>EB-JEPA / 世界模型路线</h3>
+              <ul>
+                <li>输入是图像、视频、环境状态、动作向量。</li>
+                <li>训练目标是 latent prediction + 防坍塌 regularization。</li>
+                <li>输出是未来状态 embedding，不是文字 token。</li>
+                <li>重点学习物理/视觉动态：状态如何随时间和动作变化。</li>
+                <li>做规划时直接在 learned latent dynamics 上优化动作序列。</li>
+              </ul>
+            </article>
+          </div>
+
+          <h3>8. 防坍塌为什么重要</h3>
+          <p>JEPA 只在 embedding 空间预测，有一个典型危险：encoder 可能把所有输入都编码成同一个向量。这样 prediction loss 很低，但表示完全没信息，模型“坍塌”了。所以 repo 里用了多种 regularizer：</p>
+          <ul>
+            <li><code class="inline">VCLoss</code>：variance loss 保证每个特征维度有足够方差；covariance loss 惩罚特征维度之间过强相关。</li>
+            <li><code class="inline">TemporalSimilarityLoss</code>：让同一轨迹上的相邻状态表示更平滑。</li>
+            <li><code class="inline">InverseDynamicsLoss</code>：从连续状态表示反推 action，避免表示只记住无关背景或走捷径。</li>
+          </ul>
+          <p><code class="inline">examples/ac_video_jepa/README.md</code> 的 ablation 也强调，去掉 variance、covariance、time-sim、IDM 都会显著损害 planning success，尤其 IDM 对随机墙环境很关键。</p>
+
+          <div class="callout">最终理解：<strong>EB-JEPA 是一条“非语言中心”的世界模型路线。</strong>它不是把环境描述成文本再让 LLM 推理，而是把视觉世界压成 latent state，学习 latent dynamics，再用能量/代价函数做动作规划。它和 LLM 可以互补：LLM 适合语义任务分解和工具编排，JEPA 适合学习可预测的视觉/物理状态演化。</div>
+          <div class="refs">参考源码/文档：<code class="inline">/root/eb_jepa/README.md</code>、<code class="inline">/root/eb_jepa/examples/video_jepa/README.md</code>、<code class="inline">/root/eb_jepa/examples/ac_video_jepa/README.md</code>、<code class="inline">/root/eb_jepa/eb_jepa/jepa.py</code>、<code class="inline">/root/eb_jepa/eb_jepa/planning.py</code>、<code class="inline">/root/eb_jepa/eb_jepa/architectures.py</code>、<code class="inline">/root/eb_jepa/eb_jepa/losses.py</code>。</div>

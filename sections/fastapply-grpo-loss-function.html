@@ -1,10 +1,32 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">04</div><h2>详解这个训练里的损失函数</h2></div>
+          <p>这次 FastApply 训练用的不是监督学习的 cross entropy，而是 MinT 的 <code class="inline">loss_fn=&quot;importance_sampling&quot;</code>。它对应 GRPO / policy-gradient 风格更新：同一个 prompt 采样多条 response，用 verifier reward 算组内 advantage，然后让高 advantage 轨迹概率上升、低 advantage 轨迹概率下降。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>Datum 里四个核心输入</h3>
+              <ul>
+                <li><code class="inline">target_tokens</code>：当前序列每个位置要预测的下一个 token。</li>
+                <li><code class="inline">weights</code>：prompt 部分为 0，response 部分为 1，只训练生成段。</li>
+                <li><code class="inline">logprobs</code>：采样时旧策略 <code class="inline">π_old</code> 对生成 token 的 log probability。</li>
+                <li><code class="inline">advantages</code>：同组 reward 中心化后的相对优势，复制到 response 每个 token。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>直观公式</h3>
+              <pre><code>reward_i = verifier(output_i)
+adv_i = reward_i - mean(reward_group)
+ratio_t = exp(logπ_new(token_t) - logπ_old(token_t))
+loss ≈ - Σ weights_t · adv_i · ratio_t</code></pre>
+              <p>所以 advantage 为正时，模型被推动提高这条输出的概率；advantage 为负时，模型被推动降低这条输出的概率。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1">采样：用当前 LoRA sampler 生成 candidate updated code。</div>
+            <div class="flow-step" data-step="2">打分：检查 exact match、tag 格式、是否有多余文本、语法合法性。</div>
+            <div class="flow-step" data-step="3">中心化：同组内 reward 减均值，得到 advantage。</div>
+            <div class="flow-step" data-step="4">importance sampling：用旧 logprob 和新 logprob 的 ratio 做离策略校正。</div>
+          </div>
+
+          <div class="callout">精髓：这个 loss 学的不是“标准答案 token 长什么样”，而是“在这一组采样里，哪条生成轨迹更值得提高概率”。这就是 GRPO 和普通 SFT 的根本区别。</div>
+          <div class="refs">本次报告中：policy rollout reward=0.95、advantage=-0.025；oracle rollout reward=1.0、advantage=+0.025；<code class="inline">loss:mean=0.0001722524906026906</code>。</div>

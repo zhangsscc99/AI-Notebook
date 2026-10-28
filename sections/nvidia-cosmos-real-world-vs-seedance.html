@@ -1,10 +1,57 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">COS4</div><h2>Cosmos 怎么让生成的视频更符合真实世界，和 Seedance 类视频生成模型有什么区别</h2></div>
+          <p>先说结论：<strong>Cosmos 不能“数学保证”生成结果一定物理真实。</strong>它不是刚体/流体/碰撞求解器，也不是显式物理仿真引擎。它让视频更像真实世界，主要靠四件事：<strong>面向 Physical AI 的数据分布、视频世界模型训练、输入视频条件约束、以及后训练加入控制信号</strong>。</p>
+          <div class="callout"><strong>一句话：</strong>Cosmos 的真实世界一致性不是靠一条 if 规则保证，而是靠“真实物理场景视频训练 + 时空压缩表示 + 未来帧预测/Video2World 条件约束 + Physical AI 后训练任务”形成的世界动态先验。它更偏“仿真/机器人/自动驾驶数据引擎”，普通消费级视频生成更偏“好看、创意、镜头语言”。</div>
+
+          <h3>1. 第一层：训练目标就偏向 Physical AI，而不是纯娱乐视频</h3>
+          <p>README 把 Cosmos 定义为给 Physical AI 开发者使用的 World Foundation Model 平台。这个定位会影响数据、任务和评估：它更关心机器人、驾驶、工业、仓储、相机视角、未来帧演化等场景，而不是只追求视觉风格和短视频观感。</p>
+          <p>这意味着模型更容易学到：物体不会无故大跳变、相机运动要连续、机器人/车辆场景里空间布局要稳定、未来帧要接得上前面的上下文。</p>
+
+          <h3>2. 第二层：Video2World 用输入视频/图片做硬条件</h3>
+          <p>普通 Text2Video 只靠 prompt 时，模型可以自由想象；Cosmos 的 Video2World 会把输入图像或视频编码为 <code class="inline">condition_latent</code>，并用 <code class="inline">condition_video_indicator</code> 标出前几个时间步是条件区域。源码里 <code class="inline">x0_pred_replaced</code> 会把条件区域替换回原始输入 latent。</p>
+          <pre><code>前几帧：来自真实输入视频/图片，作为 condition region
+后续帧：模型在 latent 空间生成
+约束效果：新视频必须从已有视觉状态延展，而不是凭空重画整个世界</code></pre>
+          <p>这就是 Video2World 比纯文本视频生成更适合“真实世界延展”的原因：它有真实上下文锚点。</p>
+
+          <h3>3. 第三层：时空 tokenizer 让模型在压缩世界表示上学习动态</h3>
+          <p>Cosmos Tokenizer 把视频压缩成连续 latent 或离散 token。这个压缩不是简单存图片，而是在时空结构上保留视觉和运动信息。Diffusion 模型在 continuous latent 里去噪；AR 模型在 discrete video token 上预测未来。</p>
+          <p>这相当于让模型学习“世界状态的压缩表示如何随时间演化”，而不是逐像素瞎猜。压缩表示减少了计算负担，也让模型能把容量更多用在语义、运动和场景连续性上。</p>
+
+          <h3>4. 第四层：后训练可以把控制信号接进世界模型</h3>
+          <p><code class="inline">POST_TRAINING.md</code> 里列了 Cosmos 论文讨论的后训练方向：</p>
+          <ul>
+            <li><strong>Instruction Control：</strong>用指令-视频对训练机器人任务，比如折衣服、抓取物体。</li>
+            <li><strong>Action Control：</strong>用动作向量预测下一视觉帧，适合机器人控制。</li>
+            <li><strong>Camera Control：</strong>加入相机位姿条件，让单图生成更 3D-consistent。</li>
+            <li><strong>Multi-View Generation：</strong>给自动驾驶生成同步多视角视频。</li>
+            <li><strong>Trajectory Control：</strong>把车辆轨迹作为条件，生成符合路径的驾驶世界。</li>
+          </ul>
+          <p>这些控制信号是 Cosmos 和普通“给一句 prompt 生成好看视频”的关键差别。真实世界一致性不是只靠 prompt，而是可以把动作、相机、轨迹、多视角这些物理 AI 变量接进模型。</p>
+
+          <h3>5. 它和 Seedance 这类普通视频生成模型的区别</h3>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>Seedance 类通用视频生成</h3>
+              <p>更偏消费级/创作型生成：文本或图片到视频，重点通常是画面质量、风格、运镜、角色表现、短视频观感、创意可控性。</p>
+              <p>它们当然也会学习真实视频规律，但主要产品目标不是给机器人或自动驾驶系统做可后训练、可接动作/轨迹/多视角控制的数据引擎。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Cosmos</h3>
+              <p>更偏 Physical AI 基础设施：Text2World / Video2World、未来帧延展、视频 tokenizer、NeMo 后训练、动作/相机/多视角/轨迹控制方向、安全 guardrail。</p>
+              <p>它关注的不只是“视频看起来漂亮”，还包括“能不能作为机器人/驾驶/仿真系统的世界预测和数据生成底座”。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>6. 但不要误解：Cosmos 不是物理引擎</h3>
+          <p>严格说 Cosmos 的真实世界能力是<strong>统计学习出来的世界先验</strong>，不是显式求解牛顿力学。它可能更懂真实视频分布，但不能保证每次生成都满足：</p>
+          <ul>
+            <li>精确碰撞约束；</li>
+            <li>严格质量守恒；</li>
+            <li>可验证的 3D 几何一致性；</li>
+            <li>长时间无漂移的物体身份保持；</li>
+            <li>动作执行后的真实动力学结果。</li>
+          </ul>
+          <p>如果要高可靠物理仿真，仍然需要把 Cosmos 和仿真器、控制器、3D 引擎、评估器结合，而不是把它当成完整替代品。</p>
+
+          <div class="callout">最终判断：<strong>Cosmos 比普通视频生成更“世界模型化”，因为它围绕 Physical AI 构建了 Video2World、未来帧、tokenizer、后训练和控制接口；但它仍然是生成模型，不是物理规则求解器。</strong></div>
+          <div class="refs">参考源码/文档：<code class="inline">README.md</code>、<code class="inline">cosmos1/models/POST_TRAINING.md</code>、<code class="inline">cosmos1/models/diffusion/model/model_v2w.py:38-390</code>、<code class="inline">cosmos1/models/diffusion/inference/inference_utils.py:446-735</code>、<code class="inline">cosmos1/models/tokenizer/README.md</code>、<code class="inline">cosmos1/models/autoregressive/inference/world_generation_pipeline.py:282-690</code>、<code class="inline">cosmos1/models/guardrail/README.md</code>。</div>

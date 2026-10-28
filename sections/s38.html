@@ -1,10 +1,76 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">38</div><h2>OpenClaw 记忆的 sync 是什么时候触发的</h2></div>
+          <p>OpenClaw memory sync 不是只有一个入口。源码里它是<strong>多触发器机制</strong>：搜索时兜底、文件变化时触发、会话 transcript 增量触发、session start 预热、定时触发、手动/CLI/status 触发。不同触发器的目的不一样。</p>
+          <div class="callout"><strong>一句话：</strong>第一次搜索没索引会同步强制建；memory 文件变化会 watcher 延迟建；session transcript 变化会 debounce + delta 阈值后建；配置了 interval 会定时建；session-start 和 search 也会做后台预热/刷新。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 首次搜索兜底触发</h3>
+              <p><code class="inline">MemoryIndexManager.search()</code> 先检查 <code class="inline">hasIndexedContent()</code>。如果 <code class="inline">chunks</code> / FTS 里没有内容，会执行 <code class="inline">sync({ reason: "search", force: true })</code>。这是同步阻塞式 bootstrap，目的是第一次读记忆不要空查。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 搜索时异步刷新</h3>
+              <p>如果已经有索引，但 <code class="inline">dirty</code> 或 <code class="inline">sessionsDirty</code>，搜索时会走 <code class="inline">startAsyncSearchSync()</code>，用 <code class="inline">reason="search"</code> 后台刷新。当前搜索可以先用旧索引返回，避免每次搜索都卡住。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. memory 文件 watcher 触发</h3>
+              <p><code class="inline">ensureWatcher()</code> 监听 <code class="inline">MEMORY.md</code>、<code class="inline">memory/</code> 和 extraPaths。文件 add/change/unlink/unlinkDir 后设置 <code class="inline">dirty=true</code>，再按 <code class="inline">watchDebounceMs</code> 延迟调用 <code class="inline">sync({ reason: "watch" })</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. session transcript 增量触发</h3>
+              <p>如果 sources 包含 <code class="inline">sessions</code>，<code class="inline">ensureSessionListener()</code> 会监听 transcript update。它不会每行 JSONL 都立刻 sync，而是 5 秒 debounce，再看 deltaBytes / deltaMessages 是否达到阈值，达到才 <code class="inline">sync({ reason: "session-delta" })</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>5. session-start 预热触发</h3>
+              <p><code class="inline">warmSession()</code> 在配置 <code class="inline">sync.onSessionStart</code> 开启时，会对每个 sessionKey 触发一次 <code class="inline">sync({ reason: "session-start" })</code>。它是预热，不是每轮对话都强制重建。</p>
+            </article>
+            <article class="mini-card">
+              <h3>6. interval 定时触发</h3>
+              <p>如果配置了 <code class="inline">sync.intervalMinutes</code>，<code class="inline">ensureIntervalSync()</code> 会 setInterval 定时跑 <code class="inline">sync({ reason: "interval" })</code>。这是兜底补偿，防 watcher 漏事件或外部批量修改。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>可以按这张触发图理解：</p>
+          <pre><code>memory_search
+  ├─ no indexed content -> sync(reason="search", force=true)  # 首次强制建索引
+  └─ dirty/sessionsDirty -> async sync(reason="search")       # 后台刷新
+
+MEMORY.md / memory/ / extraPaths changed
+  -> watcher mark dirty
+  -> debounce
+  -> sync(reason="watch")
+
+session transcript updated
+  -> onSessionTranscriptUpdate
+  -> 5s debounce
+  -> deltaBytes / deltaMessages threshold
+  -> sync(reason="session-delta")
+
+new session starts
+  -> warmSession
+  -> sync(reason="session-start") if enabled
+
+interval configured
+  -> setInterval
+  -> sync(reason="interval")</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>sync 触发后一定重建全部吗</h3>
+              <p>不一定。<code class="inline">runSync()</code> 会先判断是否需要 full reindex。只有 force、provider/配置变化、sources/scope/chunk 参数变化等情况才会全量重建。普通 watcher sync 会比较 hash，只重建新增或变化文件。</p>
+            </article>
+            <article class="mini-card">
+              <h3>watch 为什么要 debounce</h3>
+              <p>一次编辑可能产生多次 add/change 事件；写文件也可能先写临时文件再 rename。debounce 可以把一串文件系统事件合成一次 sync，避免频繁重建索引。</p>
+            </article>
+            <article class="mini-card">
+              <h3>session 为什么有 delta 阈值</h3>
+              <p>session transcript 是持续追加的 JSONL。如果每条消息都立即 reindex，成本太高。deltaBytes / deltaMessages 用来等积累到一定变化量再同步。</p>
+            </article>
+            <article class="mini-card">
+              <h3>什么时候最确定会同步建索引</h3>
+              <p>最确定的是“第一次 <code class="inline">memory_search</code> 且索引为空”：源码直接 force sync。其他触发多是配置和 dirty 状态驱动。</p>
+            </article>
+          </div>
+
+          <div class="callout">结论：OpenClaw memory sync 是“按需 + 事件 + 定时”的组合。它不是每次对话都全量重建，也不是只有搜索时才建；它用首次搜索兜底保证可用，用 watcher/session delta/interval 保持索引新鲜。</div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/memory/manager.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-sync-ops.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-async-state.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-session-reindex.ts</code>、<code class="inline">extensions/memory-core/src/memory/qmd-manager.ts</code></div>

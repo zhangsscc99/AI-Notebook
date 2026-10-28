@@ -1,10 +1,41 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">19</div><h2>为什么好像有家量化公司 40B 模型能在 SWE-bench Verified 上跑出 81 高分</h2></div>
+          <p>你说的现象大概率是在说 IQuest-Coder-V1 / IQuestLab 这类报道：网上有文章写 40B 模型在 SWE-bench Verified 接近或达到 81%+，也有人把它和量化/对冲基金背景联系起来。但这个数字要非常谨慎看。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>先讲清楚：81 分不一定是官方独立验证</h3>
+              <ul>
+                <li>SWE-bench 官方页面说明 Verified 是 500 个 human-filtered instances，指标是 resolved percentage。</li>
+                <li>IQuestLab 的 Hugging Face / GitHub 可见版本更保守地写过 SWE-bench Verified 76.2%。</li>
+                <li>一些第三方页面和传播文章写 81.4%，但也有文章特别提醒这是 self-reported / 不在官方 leaderboard 上独立验证。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>为什么 40B 仍可能很高</h3>
+              <ul>
+                <li><strong>不是纯 base model 分数</strong>：SWE-bench 往往是 model + agent scaffold + search/edit/test loop。</li>
+                <li><strong>test-time compute</strong>：多轮定位、生成 patch、跑测试、失败重试，会显著提高分数。</li>
+                <li><strong>训练数据贴近</strong>：如果训练了 repo evolution、commit transition、issue→patch 模式，会非常适配 SWE-bench。</li>
+                <li><strong>benchmark 可能被污染</strong>：公开 GitHub issue / patch / future commit 被模型见过，就会把“解题”变成“回忆”。</li>
+              </ul>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>这和 reward hacking 的关系</h3>
+              <p>如果一个系统专门优化 SWE-bench 的分布、测试方式、仓库历史和 evaluation harness，它可能在 benchmark 上很强，但真实未知项目不一定同样强。这种现象有时叫 <strong>benchmaxxing</strong>：最大化 benchmark 分数，而不是最大化泛化工程能力。</p>
+            </article>
+            <article class="mini-card">
+              <h3>要怎么判断真假能力</h3>
+              <ul>
+                <li>看是否在官方 leaderboard 独立复现。</li>
+                <li>看是否公开 trajectories、patch、运行环境。</li>
+                <li>看在新 benchmark / 私有 repo / 时间后切分任务上的表现。</li>
+                <li>看失败案例，而不是只看单一高分。</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="callout">总结：40B 打高分不一定不可能，但 81% 这种数字要区分“官方独立验证、同一 harness 复现”还是“自报 / 特定环境 / benchmark 定向优化”。</div>
+          <div class="refs">参考：SWE-bench 官方说明 Verified 为 500 human-filtered instances；IQuestLab Hugging Face / GitHub 写过 76.2%；部分第三方页面传播 81.4% 并提示需谨慎。</div>

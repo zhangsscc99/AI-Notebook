@@ -1,10 +1,33 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">13</div><h2>syntax 那里能不能改写成支持更多常见编程语言</h2></div>
+          <p>可以，已经把项目里的 <code class="inline">fastapply_pipeline/ast_tools.py</code> 改成多语言可插拔检查，不再只写死 Python 和 JS。现在逻辑是：有本地语法工具就用工具检查；没有工具就退回 heuristic，并在结果里标记 <code class="inline">checked=False</code>。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>现在支持的方向</h3>
+              <ul>
+                <li>Python：<code class="inline">ast.parse</code></li>
+                <li>JavaScript：<code class="inline">node --check</code></li>
+                <li>TypeScript：<code class="inline">tsc --noEmit</code></li>
+                <li>Java：<code class="inline">javac</code></li>
+                <li>Go：<code class="inline">gofmt -e</code></li>
+                <li>Rust：<code class="inline">rustc --crate-type=lib --emit=metadata</code></li>
+                <li>C/C++：<code class="inline">gcc/g++ -fsyntax-only</code></li>
+                <li>Shell/Ruby/PHP/Lua：对应 <code class="inline">bash -n</code>、<code class="inline">ruby -c</code>、<code class="inline">php -l</code>、<code class="inline">luac -p</code></li>
+                <li>JSON/YAML：标准解析器 / PyYAML</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>注意：这仍不是运行测试</h3>
+              <p>syntax 检查只回答“语法/解析层面是否过得去”。它不能保证代码运行不报错，也不能保证业务逻辑正确。比如变量未定义、数据库连接失败、单测失败、类型不匹配，都可能不是纯 syntax 能解决的。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <pre><code>ScopeInfo(
+  language="typescript",
+  parse_ok=True,
+  checker="tsc",
+  checked=True,
+)</code></pre>
+
+          <div class="callout">结论：syntax 已改成多语言可插拔，但真正严肃的代码 reward 应该继续叠加 unit tests、type checker、lint、沙箱执行和 LLM judge。</div>
+          <div class="refs">代码位置：<code class="inline">/root/rlhf/fastapply_pipeline/ast_tools.py</code>；测试已覆盖 Python、JSON 和 TypeScript fallback。</div>

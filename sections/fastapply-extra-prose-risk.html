@@ -1,10 +1,32 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">17</div><h2>多余解释会给训练和下游带来什么风险</h2></div>
+          <p>在代码 Apply 任务里，多余解释不是小问题。因为这个模型的输出通常不是给人看的，而是要给下游程序自动接上。no_extra_prose 的价值就在这里。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>训练侧风险</h3>
+              <ul>
+                <li><strong>reward hacking</strong>：模型可能学会“代码正确 + 外面胡说”，exact 仍高，但行为不干净。</li>
+                <li><strong>分布污染</strong>：GRPO 会提高高 reward 轨迹概率，如果不罚废话，模型会保留聊天习惯。</li>
+                <li><strong>长度浪费</strong>：多余 token 影响采样成本，也挤占长代码上下文。</li>
+                <li><strong>多标签歧义</strong>：如果输出多个 <code class="inline">updated</code> 块，不同 extractor 可能取 first 或 last，训练和部署不一致。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>下游工程风险</h3>
+              <ul>
+                <li>某些接入方可能不是用我们这个鲁棒正则，而是直接拿 raw output 写文件。</li>
+                <li>Markdown fence、解释文本、日志前缀会让 apply / formatter / compiler 直接失败。</li>
+                <li>额外自然语言可能被当成代码注释或非法 token 混入文件。</li>
+                <li>安全上也更难控：标签外文本可能携带无关指令、路径、环境信息。</li>
+              </ul>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1">训练时允许抽取，是为了不要因为一点格式噪声完全丢掉内容 reward。</div>
+            <div class="flow-step" data-step="2">训练时惩罚 extra prose，是为了逐步把模型推向纯机器输出。</div>
+            <div class="flow-step" data-step="3">上线时最好要求 raw output 本身就是唯一 updated 块。</div>
+            <div class="flow-step" data-step="4">最终目标：下游可以直接解析、应用、测试，不需要人工清洗。</div>
+          </div>
+
+          <div class="callout">结论：<strong>规则抽取是容错机制，no_extra_prose 是行为约束。</strong> 容错不是纵容；训练里两者同时存在，才能既不浪费接近正确的样本，又把模型输出训得足够干净。</div>

@@ -1,0 +1,29 @@
+{
+  "name": "agent-systems-field-guide",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "content": "node scripts/generate-content.mjs",
+    "fonts": "python3 scripts/build-fonts.py",
+    "dev": "npm run content && vite",
+    "build": "npm run content && tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/newsreader": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "fuse.js": "7.5.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "cheerio": "1.2.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.5"
+  }
+}

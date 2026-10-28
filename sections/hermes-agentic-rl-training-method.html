@@ -1,10 +1,46 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">08</div><h2>Hermes agentic RL 的训练方法是什么：是不是 GRPO，reward 谁定义</h2></div>
+          <p>源码里最准确的说法是：<strong>它是 GRPO 风格的 group-relative policy optimization，但实现上是 Tinker 的 <code class="inline">importance_sampling</code> loss + 组内 baseline 的 advantage 训练，而不是 repo 里直接写死一个“GRPO 算法类”</strong>。也就是说，方法论上接近 GRPO，工程落地上是“分组采样 + 相对优势 + 策略梯度式更新 + LoRA 微调”。</p>
+          <div class="callout"><strong>短结论：</strong>不是纯 SFT，也不是只做 reward model；核心是每个 prompt 采一组 rollout，先在组内算相对好坏，再只把更好的行动轨迹往上推。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先采样一组轨迹。</strong>同一个 item 会用 <code class="inline">group_size</code> 采多条 rollout。Hermes 这套代码里，环境层通过 <code class="inline">collect_trajectories()</code> 收集每条 trajectory 的 tokens、logprobs、messages 和 score。</div>
+            <div class="flow-step" data-step="2"><strong>每条轨迹先拿到标量 reward。</strong>reward 不是模型自己凭空“定义”的，而是环境里的 <code class="inline">compute_reward()</code> 给出来的。比如 GSM8K 是对答案；SWE 环境是跑测试；更复杂的 agentic 环境会把多信号合成一个分数。</div>
+            <div class="flow-step" data-step="3"><strong>组内做 baseline。</strong><code class="inline">TinkerAtroposTrainer.pad_data_to_good_offset()</code> 里直接算 <code class="inline">advantages = scores - mean(scores)</code>。这就是典型的 group-relative 训练逻辑。</div>
+            <div class="flow-step" data-step="4"><strong>生成 token 才有梯度。</strong>prompt token 的 advantage 被置 0，只有模型自己输出的 token 参与更新。训练目标不是“把题目背下来”，而是“把行动策略调好”。</div>
+            <div class="flow-step" data-step="5"><strong>用 importance sampling 更新 LoRA。</strong><code class="inline">forward_backward_async(data, loss_fn="importance_sampling")</code> 配合 <code class="inline">optim_step_async()</code> 做参数更新。更新对象是 LoRA client，不是每次全量改 base model。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么说它像 GRPO</h3>
+              <p>因为它和 GRPO 的核心直觉一致：同一 prompt 采多个答案，在组内比较，不依赖单独训练一个 value model 也能形成相对优势信号。源码里最明显的证据就是 <code class="inline">score - group_mean</code> 这一步。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么又不该说成“标准 GRPO”</h3>
+              <p>因为仓库里的实际训练入口没有暴露一个独立的 GRPO optimizer API，而是走 Tinker 的 <code class="inline">importance_sampling</code> loss。对读代码来说，更稳妥的描述是“GRPO-like group-relative RL”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>不同 pipeline 怎么训练</h3>
+              <p>训练方法骨架不变，变的是环境和 reward。数学题 pipeline 主要是正确性 reward；SWE pipeline 是测试通过率；更 agentic 的环境会把过程信号、部分成功、工具轨迹质量一起纳入 reward。</p>
+            </article>
+            <article class="mini-card">
+              <h3>reward 是 AI 自己定义的吗</h3>
+              <p>不是。reward 由环境作者或 verifier 定义，Hermes agent 只是在这个定义下试行动、拿反馈、更新策略。AI 可以参与评分器的一部分实现，比如 LLM judge 或抽取器，但那是 reward 设计的一部分，不是训练中的 agent 自己给自己打分。</p>
+            </article>
+          </div>
+
+          <p>不同 pipeline 的 reward 形状，决定了训练重点会偏向哪里：</p>
+          <pre><code>1. GSM8K / math pipeline
+   reward = 1 if boxed answer correct else 0
+   目标：推高正确推理和答案格式
+
+2. SWE / coding pipeline
+   reward = tests pass ? 1.0 : partial credit / 0.0
+   目标：推高读文件、改代码、跑测试、最小修复这类行动序列
+
+3. 更复杂的 agentic pipeline
+   reward = correctness + process + safety + tool success
+   目标：推高完整任务完成率，而不是只学最终输出文本</code></pre>
+
+          <div class="callout"><strong>最重要的边界：</strong>Hermes agent 不会“自己发明 reward 规则再训练自己”。它会自己生成轨迹，但 reward 的定义来自外部环境/验证器；真正的自我改进来自“自己行动产生数据，再按外部 reward 更新自己”。</div>
+          <div class="refs">参考：<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/trainer.py</code>、<code class="inline">/root/hermes/environments/hermes_base_env.py</code>、<code class="inline">/root/hermes/environments/hermes_swe_env/hermes_swe_env.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/environments/gsm8k_tinker.py</code>、<code class="inline">/root/hermes/environments/agentic_opd_env.py</code></div>

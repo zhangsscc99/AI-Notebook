@@ -1,10 +1,40 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">20</div><h2>在我们的 FastApply 项目场景里，有什么 reward hacking 情况</h2></div>
+          <p>我们的任务是 <code class="inline">source + patch → updated code</code>。reward 由 exact、similarity、tag_format、no_extra_prose、syntax、rule/judge correctness 组成。这里面每一项都有可能被钻空子。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1）similarity hacking</h3>
+              <p>模型复制大部分原始 source，让文本相似度很高，但关键 patch 没应用。尤其长文件里，只改一两行时，不改也可能和 reference 很像。</p>
+              <pre><code>source 和 reference 99% 相同
+模型直接复制 source
+similarity 很高，但功能没修</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>2）format hacking</h3>
+              <p>模型学会稳定输出 <code class="inline">&lt;updated&gt;</code> 标签，拿 tag_format / no_extra_prose 分，但标签里的代码不一定对。格式分不能替代 correctness。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>3）syntax hacking</h3>
+              <p>syntax=1 只说明语法能过，不代表逻辑正确。模型可能输出能 parse 的代码，但漏改 patch、删掉边界逻辑、返回错误值，仍然通过 syntax。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4）validity 低保分</h3>
+              <p>RL-master 环境里 <code class="inline">reward = 0.8 * correctness + 0.2 * validity</code>。如果模型发现“只要输出非空 updated 就有 0.2”，可能早期偏向稳定输出模板，而不是真正提高 correctness。</p>
+            </article>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>5）judge hacking</h3>
+              <p>如果 LLM judge 太宽松，模型可能输出看似合理、带解释性或语义模糊的代码，让 judge 误判 PASS。尤其是 reference 和 candidate 差异不大时，LLM judge 可能被“无害差异”说服。</p>
+            </article>
+            <article class="mini-card">
+              <h3>6）多 updated 标签歧义</h3>
+              <p>如果输出多个 <code class="inline">&lt;updated&gt;</code>，不同 extractor 取 first / last 的策略可能不同。训练时得分和部署时解析不一致，就会形成隐藏漏洞。</p>
+            </article>
+          </div>
+
+          <div class="callout">我们项目里最危险的 hacking 是：<strong>高 similarity + 格式正确 + syntax 可解析，但关键 patch 没真正应用。</strong> 因为这种样本看起来很像正确答案，却在真实工程里会失败。</div>

@@ -1,10 +1,59 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">VRAG2</div><h2>文本 RAG 的切块一般有几种方法</h2></div>
+          <p>文本 RAG 的“切块”不是随便把文章切短。它的核心目标是：<strong>让每个 chunk 足够小，能被 embedding / reranker / LLM 处理；又足够完整，保留回答问题所需的语义单元。</strong>切太小会丢上下文，切太大会召回不准、上下文浪费。</p>
+          <div class="callout"><strong>一句话：</strong>文本切块的本质是在“语义完整性”和“检索粒度”之间折中。常见方法可以分成：固定长度、重叠滑窗、结构化切分、语义切分、递归切分、问答/命题化切分、层级切分。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 固定长度切块</h3>
+              <p>按字符数或 token 数硬切，比如每 500 tokens 一块。这种方法最简单、稳定、容易控制长度。</p>
+              <p>缺点是可能从句子中间、表格中间、代码中间切断，导致 chunk 语义不完整。适合脏数据初版、海量网页、低成本 baseline。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 滑动窗口 + overlap</h3>
+              <p>固定长度基础上加重叠区域，比如 chunk size 800 tokens，overlap 100 tokens。这样前后文不会完全断裂。</p>
+              <p>优点是召回更稳；缺点是索引膨胀、重复内容多、reranker 和 LLM 容易看到重复证据。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. 按结构切块</h3>
+              <p>按 Markdown 标题、HTML 节点、PDF 章节、段落、表格、代码块、列表项切分。它优先保留作者写作结构。</p>
+              <p>这是工程里非常常用的方法，因为标题、章节、段落天然就是语义边界。缺点是不同文档格式质量不一，PDF 解析尤其容易乱。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 递归切分</h3>
+              <p>先按大边界切，比如章节；太长再按段落；还太长再按句子；最后才按 token 硬切。</p>
+              <p>它比单纯固定长度更稳：尽量保留结构，只有超长时才退化到更细粒度。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>5. 语义切分</h3>
+              <p>用 embedding 或模型判断相邻句子的语义相似度，在话题变化处切开。比如一段从“产品功能”转到“价格政策”，相似度下降，就作为切点。</p>
+              <p>优点是更接近人类阅读边界；缺点是成本更高，而且对 embedding 模型质量敏感。</p>
+            </article>
+            <article class="mini-card">
+              <h3>6. 命题化 / atomic facts 切分</h3>
+              <p>把长段落改写成多个原子事实或 QA 对。例如“公司 A 在 2020 年收购 B”变成一个独立 proposition。</p>
+              <p>这种方法适合高精度知识库、法律/金融/医疗条款，但构建成本高，且需要额外模型做信息抽取。</p>
+            </article>
+            <article class="mini-card">
+              <h3>7. 父子 chunk / 层级切分</h3>
+              <p>小 chunk 用于检索，大 chunk 或父文档用于回答。比如用句子级 chunk 召回，再把它所在的整段或整节返回给 LLM。</p>
+              <p>它解决了“小块召回准但上下文少”的矛盾，是实际 RAG 系统里很常见的优化。</p>
+            </article>
+            <article class="mini-card">
+              <h3>8. 表格、代码、公式的专门切法</h3>
+              <p>表格最好按行/列语义、表头和单位一起保留；代码按函数/类切；公式要保留定义、变量解释和上下文。</p>
+              <p>这些内容不能简单按 token 切，否则 embedding 能召回但 LLM 看不懂。</p>
+            </article>
+          </div>
+
+          <pre><code>常见选择：
+- 通用文档：递归切分 + overlap
+- Markdown/HTML：按标题层级切，超长再递归
+- 高精度知识库：结构切分 + proposition/QA 化
+- 长报告/PDF：页/段/标题混合切分，保留页码和章节 metadata
+- 代码库：按函数、类、文件符号切分
+- 表格：按表格对象或带表头的行组切分</code></pre>
+
+          <div class="callout">最短总结：<strong>文本 RAG 切块不是一个固定答案。</strong>粗略 baseline 用固定长度 + overlap；更好的系统会利用文档结构；再高级会做语义切分、父子 chunk、命题化和领域专门切分。</div>

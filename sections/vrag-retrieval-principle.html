@@ -1,10 +1,14 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">VRAG4</div><h2>VRAG 用的是什么检索原理</h2></div>
+          <p>从源码看，VRAG 的检索不是 BM25，也不是 LLM 直接读全量图片，而是<strong>多模态 dense retrieval</strong>：把文本、图片、视频片段编码到同一个向量空间，然后用 FAISS 做向量相似度检索。</p>
+          <div class="callout"><strong>一句话：</strong>VRAG 检索原理 = 多模态 embedding 模型把 query 和视觉/文本语料都变成向量，FAISS 用内积相似度找 topK，agent 再把召回的图片/视频/文本喂给 VLM 继续推理。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>建库。</strong><code class="inline">SearchEngine.build_index()</code> 扫描 corpus。文本记录保存 <code class="inline">content</code>，图片保存 <code class="inline">file_path</code>，视频保存 <code class="inline">file_path</code> 和抽帧参数。</div>
+            <div class="flow-step" data-step="2"><strong>编码。</strong>如果用 GVE，就通过 <code class="inline">VLProcessor</code> 把 text/image/video 包成 Qwen2.5-VL 风格消息，再 <code class="inline">model.encode()</code>；如果用 Qwen3-VL Embedding，就调用 <code class="inline">Qwen3VLEmbedder.process()</code>。</div>
+            <div class="flow-step" data-step="3"><strong>归一化。</strong>GVE 的 <code class="inline">AutoModelForSentenceEmbedding.encode()</code> 默认会 <code class="inline">F.normalize</code>；Qwen3-VL Embedding 的 <code class="inline">process(..., normalize=True)</code> 也会 L2 normalize。</div>
+            <div class="flow-step" data-step="4"><strong>入库。</strong>向量写入 <code class="inline">faiss.IndexFlatIP</code>。IP 是 inner product，向量归一化后基本等价于 cosine similarity。</div>
+            <div class="flow-step" data-step="5"><strong>查询。</strong><code class="inline">SearchEngine.search()</code> 把 query 编成向量，然后调用 <code class="inline">_index.search(query_vectors.astype('float32'), top_k)</code> 返回分数和索引位置。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>所以它的 ranking 目前是<strong>纯向量相似度排序</strong>：FAISS 返回的 <code class="inline">similarities</code> 和 <code class="inline">indices</code> 直接映射回 <code class="inline">file_data_list</code>，形成 <code class="inline">score / indice / data</code>。</p>
+          <div class="refs">参考：<code class="inline">/root/VRAG/search_engine/search_engine.py:90-180</code>、<code class="inline">/root/VRAG/search_engine/search_engine.py:281-332</code>、<code class="inline">/root/VRAG/search_engine/models/GVE/models.py:133-184</code>、<code class="inline">/root/VRAG/search_engine/models/Qwen3_VL_Embedding/qwen3_vl_embedding.py:372-393</code>。</div>

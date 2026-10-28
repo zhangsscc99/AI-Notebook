@@ -1,10 +1,75 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">02</div><h2>FastApply GRPO 完整复刻：Qwen3 4B MinT 训练报告</h2></div>
+          <p>现在已按 18 张图里的训练路线复刻：<strong>source + patch → 采样 rollouts → FastApply verifier reward → group-relative advantages → <code class="inline">loss_fn=&quot;importance_sampling&quot;</code> 的 GRPO 训练</strong>。数据仍然只用 1–2 条 tiny test 样本，不扩造大数据。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>18 张图对应的 pipeline</h3>
+              <ul>
+                <li>Apply 任务：把 patch 合并进 source，输出完整更新后代码。</li>
+                <li>Prompt contract：只输出 <code class="inline">&lt;updated&gt;...&lt;/updated&gt;</code>，不要解释、不要 Markdown fence、不要冲突标记。</li>
+                <li>Patch 形式：SEARCH/REPLACE、structured changes、unified diff/AST 变更都预留。</li>
+                <li>数据构造：Git commit/diff → old/new source → patch replay 校验 → 过滤 → 去重 → AST 顶层作用域检查。</li>
+                <li>训练核心：用 verifier reward 做 <strong>GRPO</strong>，对应 MinT 的 <code class="inline">importance_sampling</code>。</li>
+                <li>服务化：训练后保存 LoRA sampler，并用同一 Apply prompt 做采样验证。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>代码模块</h3>
+              <ul>
+                <li><code class="inline">patching.py</code>：SEARCH/REPLACE 与 structured changes 回放。</li>
+                <li><code class="inline">filters.py</code>：尺寸、patch replay、AST/syntax、dedupe 过滤。</li>
+                <li><code class="inline">ast_tools.py</code>：Python AST 与 JS 顶层符号分析。</li>
+                <li><code class="inline">rewards.py</code>：exact、similarity、tag、no-extra-prose、syntax verifier。</li>
+                <li><code class="inline">grpo.py</code>：reward centering，生成 <code class="inline">weights/logprobs/advantages</code>。</li>
+                <li><code class="inline">train_mint_fastapply_grpo.py</code>：MinT GRPO 主训练循环。</li>
+              </ul>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1">从 tiny Apply 数据构造 prompt：<code class="inline">&lt;language&gt;</code>、<code class="inline">&lt;source&gt;</code>、<code class="inline">&lt;patch&gt;</code>。</div>
+            <div class="flow-step" data-step="2">保存当前 LoRA 权重拿 sampler，对同一 prompt 采样 policy rollout。</div>
+            <div class="flow-step" data-step="3">用 FastApply verifier 打分，并对同组 reward 做中心化：<code class="inline">advantage = reward - mean_reward</code>。</div>
+            <div class="flow-step" data-step="4">构造 MinT RL Datum：prompt 权重为 0，response 权重为 1，同时填入 sampled <code class="inline">logprobs</code> 和 <code class="inline">advantages</code>。</div>
+            <div class="flow-step" data-step="5">调用 <code class="inline">forward_backward(..., loss_fn=&quot;importance_sampling&quot;)</code>，再 <code class="inline">optim_step</code>，完成 GRPO 更新。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>本次 GRPO 配置与指标</h3>
+              <ul>
+                <li>时间：2026-05-17 17:52–18:32 UTC</li>
+                <li>模型：<code class="inline">Qwen/Qwen3-4B-Instruct-2507</code></li>
+                <li>算法：<strong>GRPO / <code class="inline">importance_sampling</code></strong></li>
+                <li>LoRA：rank 16，训练 MLP / Attention / Unembed</li>
+                <li>policy samples：1；tiny smoke 中额外加入 1 条 oracle rollout 保证 advantage 非退化</li>
+                <li>GRPO datums：2；response tokens：145</li>
+                <li><code class="inline">loss:mean</code>：0.0001722524906026906</li>
+                <li><code class="inline">ratio:mean</code>：0.9999952912330627</li>
+                <li><code class="inline">grad_norm:last</code>：17516.17578125</li>
+                <li>run name：<code class="inline">fastapply-grpo-qwen3-4b-tiny-2026-05-17-v2</code></li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>Reward / Advantage</h3>
+              <ul>
+                <li>policy rollout reward：0.95，advantage：-0.025（内容正确，但多了 <code class="inline">&lt;|endoftext|&gt;</code>，no-extra-prose 扣分）。</li>
+                <li>oracle rollout reward：1.0，advantage：+0.025。</li>
+                <li>reward 由 exact match、相似度、updated 标签、无额外文本、语法合法性组成。</li>
+              </ul>
+              <p>GRPO 后采样仍能输出正确更新后的函数：</p>
+              <pre><code>&lt;updated&gt;
+def fetch_user(user_id, client, cache=None):
+    if cache is not None and user_id in cache:
+        return cache[user_id]
+    response = client.get(f"/users/{user_id}")
+    data = response.json()
+    if cache is not None:
+        cache[user_id] = data
+    return data
+&lt;/updated&gt;</code></pre>
+            </article>
+          </div>
+
+          <div class="callout">结论：这个问题已改成 GRPO 版，按图片补齐了 FastApply 的数据构造、patch replay、过滤去重、AST 边界、verifier reward、GRPO advantage 和 MinT <code class="inline">importance_sampling</code> 训练。当前只用 tiny test 数据验证链路，后续扩展时直接把真实 Git diff 数据接到同一 pipeline。</div>
+          <div class="refs">代码与报告：<code class="inline">/root/rlhf/fastapply_pipeline/train_mint_fastapply_grpo.py</code>、<code class="inline">/root/rlhf/fastapply_pipeline/grpo.py</code>、<code class="inline">/root/rlhf/fastapply_pipeline/rewards.py</code>、<code class="inline">/root/rlhf/reports/fastapply_grpo_training_report.json</code>。</div>

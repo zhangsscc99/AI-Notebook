@@ -1,10 +1,12 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">C15</div><h2>Claude Code 中，工作流编排和任务规划（广义 agent 任务规划）的核心差异是什么？</h2></div>
+          <p>这里的任务规划不是 Claude Code 的 Plan Mode，而是广义 agent planning：模型如何拆目标、排步骤、选择工具。它和工作流编排不是一回事。</p>
+          <div class="callout"><strong>核心区别：</strong>任务规划是模型层“想做什么、先做什么”；工作流编排是运行时层“如何安全执行、记录、恢复，并把结果送回模型”。</div>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card"><h3>任务规划：认知策略层</h3><p>决定先读哪些文件、是否搜索、要不要派 Explore agent、先改哪层代码。它体现在模型文本、TodoWrite、TaskCreate、Agent prompt 和工具选择里。</p></article>
+            <article class="mini-card"><h3>工作流编排：执行控制层</h3><p>决定用户输入如何成 messages、工具如何过权限、tool_result 如何闭合、上下文太长怎么办、后台任务怎么通知、max turns 怎么终止。</p></article>
+            <article class="mini-card"><h3>规划可以变，编排必须稳</h3><p>每个任务的规划都可能不同；但工具协议、权限、transcript、compact、状态流转必须稳定，否则 agent 会不可恢复或不安全。</p></article>
+            <article class="mini-card"><h3>Claude Code 的选择</h3><p>不把所有任务强制塞进固定 planner-executor DAG，而是让模型动态规划，让运行时强制执行协议。</p></article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <pre><code>Planning：目标拆解、步骤、策略、工具选择、子任务拆分
+Orchestration：schema、权限、工具执行、tool_result、attachments、compact、transcript、task notification</code></pre>
+          <div class="refs">参考文件：<code class="inline">src/query.ts</code>、<code class="inline">src/QueryEngine.ts</code>、<code class="inline">src/Tool.ts</code>、<code class="inline">src/tools/TodoWriteTool/TodoWriteTool.ts</code>、<code class="inline">src/tools/TaskCreateTool/TaskCreateTool.ts</code>、<code class="inline">src/tools/AgentTool/AgentTool.tsx</code>。</div>

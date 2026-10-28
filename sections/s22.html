@@ -1,10 +1,14 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">22</div><h2>memory 生命周期全图</h2></div>
+          <p>OpenClaw memory 的生命周期不是单个“检索函数”，而是一条从<strong>写入、建索引、搜索、回读、上下文保全、后台整理</strong>组成的链路。</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">信息先落到可审计的文件或 transcript：<code class="inline">MEMORY.md</code>、<code class="inline">memory/YYYY-MM-DD.md</code>、可选 session transcript、QMD extra paths。</div>
+            <div class="flow-step" data-step="2">sync 扫描文件，计算 hash / mtime / size，判断哪些文件新增、变化、删除。</div>
+            <div class="flow-step" data-step="3">文件被切成 chunk，记录 path、source、startLine、endLine、hash、text。</div>
+            <div class="flow-step" data-step="4">builtin 后端写 SQLite 表、FTS 虚表、可选 sqlite-vec 向量表；QMD 后端写 QMD collection。</div>
+            <div class="flow-step" data-step="5">模型需要旧信息时调用 <code class="inline">memory_search</code> 召回候选片段。</div>
+            <div class="flow-step" data-step="6">如果需要核对原文，再用 <code class="inline">memory_get</code> 按 path/from/lines 精确读取。</div>
+            <div class="flow-step" data-step="7">临近 compaction 时，memory flush 让模型把 durable 信息追加到当天 memory 文件。</div>
+            <div class="flow-step" data-step="8">dreaming / promotion 后台整理短期信号，产生候选长期记忆或 dream report。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <div class="callout">最重要的源码阅读顺序：先看 tool 入口，再看 manager.search，再看 sync/indexFile/writeChunks，最后看 flush 和 dreaming。</div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/tools.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-sync-ops.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-embedding-ops.ts</code>、<code class="inline">extensions/memory-core/src/flush-plan.ts</code></div>

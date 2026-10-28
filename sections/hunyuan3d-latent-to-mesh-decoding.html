@@ -1,10 +1,44 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">HY3D8</div><h2>latent 是如何解码成 mesh 的，是按规则还是模型</h2></div>
+          <p>latent 到 mesh 不是一个简单规则，也不是 DiT 直接吐顶点。它分两段：<strong>先由神经网络把 latent 解码成 3D 空间里的场函数 / grid logits；再由确定性几何算法从这个场里抽取表面。</strong></p>
+          <div class="callout"><strong>一句话：</strong>latent → volume field 是模型学出来的；volume field → mesh 是几何算法抽出来的。前半段是神经网络，后半段通常是 marching cubes / DMC 这类规则化 surface extraction。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>采样结束得到 shape latent。</strong>pipeline 的 <code class="inline">_export()</code> 收到最终 latents，如果输出不是 <code class="inline">latent</code>，就开始解码。</div>
+            <div class="flow-step" data-step="2"><strong>先做 scale 和 ShapeVAE forward。</strong>源码先 <code class="inline">latents = 1. / self.vae.scale_factor * latents</code>，再 <code class="inline">latents = self.vae(latents)</code>。ShapeVAE 内部用 <code class="inline">post_kl</code> 和 Transformer 处理 latent。</div>
+            <div class="flow-step" data-step="3"><strong>volume decoder 查询 3D 网格点。</strong><code class="inline">VanillaVolumeDecoder</code> 会在 bounding box 里生成密集 3D query points，比如按 octree resolution 生成 x/y/z 网格。</div>
+            <div class="flow-step" data-step="4"><strong>geo_decoder 预测每个点的 logit。</strong>volume decoder 把 query points 分 chunk 喂给 <code class="inline">geo_decoder(queries, latents)</code>，得到每个 3D 位置的 occupancy/SDF-like logit。</div>
+            <div class="flow-step" data-step="5"><strong>得到 grid_logits。</strong>所有 chunk 拼回一个 3D grid：<code class="inline">grid_logits = [B, D, D, D]</code>。这可以理解成“空间中每个格点在物体内外/表面附近的分数”。</div>
+            <div class="flow-step" data-step="6"><strong>surface extractor 抽 mesh。</strong><code class="inline">MCSurfaceExtractor</code> 调 <code class="inline">measure.marching_cubes(grid_logit, mc_level)</code>，从等值面里抽出 vertices 和 faces。</div>
+            <div class="flow-step" data-step="7"><strong>转成 trimesh / GLB。</strong>抽出的顶点和面会包装成 <code class="inline">Latent2MeshOutput</code>，再由 <code class="inline">export_to_trimesh()</code> 转成 <code class="inline">trimesh.Trimesh</code>，最终导出 glb。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>哪些是模型学的</h3>
+              <p>ShapeVAE 的 latent 表示、Transformer 处理、geo_decoder 如何根据 latent 和 3D 坐标预测 logit，这些是神经网络学出来的。</p>
+            </article>
+            <article class="mini-card">
+              <h3>哪些是规则算法</h3>
+              <p>在 3D bounding box 里采样网格点、把 logits reshape 成 3D grid、marching cubes 从等值面抽 vertices/faces，这些是确定性几何算法。</p>
+            </article>
+            <article class="mini-card">
+              <h3>marching cubes 是什么</h3>
+              <p>它把 3D 标量场里的某个等值面抽成三角网格。比如 <code class="inline">mc_level=0</code> 时，就找 logit 从负到正穿过 0 的地方，拼成物体表面。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么不是直接输出顶点</h3>
+              <p>直接输出顶点/面很难处理可变拓扑。用场函数再抽表面，可以自然表达洞、多个部件、复杂拓扑，最后由几何算法统一生成 mesh。</p>
+            </article>
+          </div>
+
+          <pre><code>latent -> mesh：
+final latent
+  -> ShapeVAE.forward(latent)
+  -> volume_decoder: 对 3D 网格点逐点查询 geo_decoder
+  -> grid_logits: 3D 标量场
+  -> surface_extractor: marching_cubes / DMC
+  -> vertices + faces
+  -> trimesh / glb</code></pre>
+
+          <div class="callout">最短总结：<strong>latent 解码成 mesh 是“神经场预测 + 几何抽表面”的组合。</strong>不是纯规则，也不是模型直接输出 mesh 文件。</div>
+          <div class="refs">参考源码：<code class="inline">/root/Hunyuan3D-2/hy3dgen/shapegen/pipelines.py:650-668</code>、<code class="inline">/root/Hunyuan3D-2/hy3dgen/shapegen/models/autoencoders/model.py:171-176</code>、<code class="inline">/root/Hunyuan3D-2/hy3dgen/shapegen/models/autoencoders/model.py:279-282</code>、<code class="inline">/root/Hunyuan3D-2/hy3dgen/shapegen/models/autoencoders/volume_decoders.py:141-182</code>、<code class="inline">/root/Hunyuan3D-2/hy3dgen/shapegen/models/autoencoders/surface_extractors.py:37-76</code>。</div>

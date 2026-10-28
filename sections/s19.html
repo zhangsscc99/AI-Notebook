@@ -1,10 +1,41 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">19</div><h2>记忆一共有哪些，除了 RAG</h2></div>
+          <p>如果把 RAG 理解成“搜索索引，然后把相关片段取回上下文”，那 OpenClaw 的 memory 体系里还有几类不是单纯 RAG 的记忆。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>Bootstrap Memory</h3>
+              <p>启动新会话时，系统会把 <code class="inline">MEMORY.md</code> 和最近几天的 daily memory 以受限预算注入上下文。这不是搜索，而是启动时的基础记忆。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Exact Read Memory</h3>
+              <p><code class="inline">memory_get</code> 按文件和行号读取原文。它不是语义检索，而是精确回读。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Session Memory</h3>
+              <p>可选地把历史 session transcript 建索引，让后续能搜索以前的对话。它属于会话历史召回。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Memory Flush</h3>
+              <p>compaction 前自动提醒模型把重要内容写进 <code class="inline">memory/YYYY-MM-DD.md</code>，这是防止上下文压缩丢信息的写入机制。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Dreaming / Promotion</h3>
+              <p>后台整理短期信号，把高价值内容候选提升到长期记忆，并把审阅信息写到 <code class="inline">DREAMS.md</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Memory Wiki</h3>
+              <p>memory-wiki 把 durable memory 编译成更像知识库的结构，有 claims、evidence、dashboard、wiki_search、wiki_get。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>换句话说，OpenClaw 的记忆不是只有“RAG 搜索”。它至少包括：</p>
+          <ul>
+            <li>启动注入型记忆：直接进入 prompt。</li>
+            <li>检索型记忆：<code class="inline">memory_search</code>。</li>
+            <li>精确读取型记忆：<code class="inline">memory_get</code>。</li>
+            <li>会话历史型记忆：session transcript indexing。</li>
+            <li>自动写入型记忆：memory flush。</li>
+            <li>整理晋升型记忆：dreaming / promotion。</li>
+            <li>知识库型记忆：memory-wiki。</li>
+            <li>外部补充语料：registered corpus supplements。</li>
+          </ul>
+          <div class="callout">RAG 是 recall 的一部分，但 OpenClaw 的 memory 更像一个“写入、启动注入、搜索、精读、整理、晋升、知识库化”的完整生命周期。</div>
+          <div class="refs">参考：<code class="inline">docs/concepts/memory.md</code>、<code class="inline">src/auto-reply/reply/startup-context.ts</code>、<code class="inline">extensions/memory-core/src/flush-plan.ts</code>、<code class="inline">docs/plugins/memory-wiki.md</code></div>

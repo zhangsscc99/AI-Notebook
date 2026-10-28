@@ -1,10 +1,105 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">30</div><h2>不用 Tinker、用显卡训练时 LoRA 层插在模型结构哪里</h2></div>
+          <p>如果不用 Tinker 远程训练，而是在自己显卡上用 Hugging Face + PEFT 训练，LoRA 不是“在模型外面再接一个新模型”，也不是“插在两个 Transformer block 中间”。它是<strong>替换/包裹模型内部指定的 Linear 线性层</strong>：原始大权重冻结，只在这些 Linear 旁边加一条低秩可训练旁路。</p>
+          <div class="callout"><strong>一句话：</strong>本地 GPU LoRA 的插入点由 <code class="inline">target_modules</code> 决定。当前 qwen_rlhf 配置把 LoRA 插到每层 Transformer 的 attention 投影 <code class="inline">q_proj/k_proj/v_proj/o_proj</code> 和 MLP 投影 <code class="inline">gate_proj/up_proj/down_proj</code> 上。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 源码里怎么指定插入位置</h3>
+              <p><code class="inline">/root/OpenClaw/src/qwen_rlhf/scripts/train_sft.py</code> 里用 PEFT：</p>
+              <pre><code>peft_cfg = LoraConfig(
+    r=lora_cfg["r"],
+    lora_alpha=lora_cfg["alpha"],
+    lora_dropout=lora_cfg["dropout"],
+    target_modules=lora_cfg["target_modules"],
+    bias="none",
+    task_type="CAUSAL_LM",
+)
+model = get_peft_model(model, peft_cfg)</code></pre>
+              <p><code class="inline">get_peft_model()</code> 会遍历模型模块名，命中 <code class="inline">target_modules</code> 的 Linear 层就包一层 LoRA adapter。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 当前配置 target_modules</h3>
+              <p><code class="inline">configs/sft_lora.yaml</code> 写得很明确：</p>
+              <pre><code>target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj</code></pre>
+              <p>所以本地显卡 LoRA 训练主要改的是 attention 如何取信息、混合信息，以及 MLP 如何做非线性特征变换。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>放到 Qwen / LLaMA 类 decoder-only 模型结构里，大致是这样：</p>
+          <pre><code>token ids
+  → embed_tokens
+  → TransformerDecoderLayer × N
+      → input_layernorm
+      → self_attn
+          q_proj   ← LoRA 插这里
+          k_proj   ← LoRA 插这里
+          v_proj   ← LoRA 插这里
+          o_proj   ← LoRA 插这里
+      → residual add
+      → post_attention_layernorm
+      → mlp
+          gate_proj ← LoRA 插这里
+          up_proj   ← LoRA 插这里
+          down_proj ← LoRA 插这里
+      → residual add
+  → final norm
+  → lm_head / unembed
+  → vocab logits</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>3. 插到 attention 层意味着什么</h3>
+              <p><code class="inline">q_proj</code> 决定当前 token 用什么 query 去找信息；<code class="inline">k_proj</code> 决定其他 token 暴露什么 key；<code class="inline">v_proj</code> 决定被取回的信息内容；<code class="inline">o_proj</code> 决定多头 attention 结果怎么合回 hidden state。</p>
+              <p>对 FastApply 这种任务，attention LoRA 会影响模型如何对齐 <code class="inline">source</code> 里的 SEARCH 片段、patch 里的 REPLACE 片段、以及输出位置。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 插到 MLP 层意味着什么</h3>
+              <p>Qwen/LLaMA 类 MLP 常见结构是 gated MLP：<code class="inline">gate_proj</code> 和 <code class="inline">up_proj</code> 把 hidden state 升维并门控，<code class="inline">down_proj</code> 再降回 hidden size。</p>
+              <p>MLP LoRA 更像在改变“每个 token 自身的特征变换”。对代码编辑任务，它会影响模型如何把“这段旧代码要改成那段新代码”的模式写进中间表示。</p>
+            </article>
+          </div>
+
+          <p>LoRA 在线性层内部的数学结构是：</p>
+          <pre><code>原始 Linear:
+  y = W x
+
+加 LoRA 后:
+  y = W x + scale · B(Ax)
+
+其中：
+  W: 原始大模型权重，冻结不训练
+  A: in_features → r 的低秩矩阵，可训练
+  B: r → out_features 的低秩矩阵，可训练
+  r: rank，例如当前配置 r=16
+  scale: lora_alpha / r</code></pre>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>加载基座模型。</strong><code class="inline">AutoModelForCausalLM.from_pretrained(...)</code> 加载 Qwen2.5-Coder-3B-Instruct。</div>
+            <div class="flow-step" data-step="2"><strong>可选 4bit 量化。</strong><code class="inline">BitsAndBytesConfig(load_in_4bit=True)</code> 可以让冻结的基座权重用 4bit 存，省显存。</div>
+            <div class="flow-step" data-step="3"><strong>PEFT 包装 Linear。</strong><code class="inline">get_peft_model()</code> 在命中的 projection Linear 旁边加 LoRA A/B 矩阵。</div>
+            <div class="flow-step" data-step="4"><strong>训练时只更新 LoRA。</strong>原始 <code class="inline">W</code> 不动，optimizer 只维护 LoRA 参数，所以显存和优化状态小很多。</div>
+            <div class="flow-step" data-step="5"><strong>保存 adapter。</strong><code class="inline">trainer.save_model()</code> 保存的是 LoRA adapter 权重和配置；推理时再挂回基座模型，或 merge 到基座权重里。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>本地 PEFT 和 Tinker 的差别</h3>
+              <p>Tinker/MinT 的 <code class="inline">create_lora_training_client(... train_attn=True, train_mlp=True, train_unembed=True)</code> 是服务端封装：你告诉它训练 attention、MLP、unembed，它内部决定具体模块。</p>
+              <p>本地 PEFT 更显式：你直接写 <code class="inline">target_modules</code>。当前本地配置没有写 <code class="inline">lm_head</code>，所以默认不训练输出词表头。</p>
+            </article>
+            <article class="mini-card">
+              <h3>如果也想训输出层怎么办</h3>
+              <p>理论上可以把 <code class="inline">lm_head</code> 加进 <code class="inline">target_modules</code>，或者用 PEFT 的 modules_to_save 保存特定非 LoRA 模块。但这会增加显存和训练不稳定风险，尤其词表头很大。</p>
+              <p>对 FastApply 这类格式明确的代码编辑任务，先训 attention + MLP 通常是性价比最高的起点；只有发现输出格式/词分布明显卡住，再考虑动 <code class="inline">lm_head</code>。</p>
+            </article>
+          </div>
+
+          <div class="callout">最短记忆：<strong>显卡训练 LoRA = 冻结 Qwen 大模型，在每层 Transformer 的 q/k/v/o attention Linear 和 gate/up/down MLP Linear 旁边加小的 A/B 低秩矩阵。</strong>它不是新增一层完整网络，而是给原有线性变换加可训练增量。</div>
+          <div class="refs">参考：<code class="inline">/root/OpenClaw/src/qwen_rlhf/scripts/train_sft.py</code>、<code class="inline">/root/OpenClaw/src/qwen_rlhf/configs/sft_lora.yaml</code>、<code class="inline">configs/sft_first_run.yaml</code>、<code class="inline">configs/sft_smoke.yaml</code>、<code class="inline">SOURCE_EXPLANATION.md</code>。</div>

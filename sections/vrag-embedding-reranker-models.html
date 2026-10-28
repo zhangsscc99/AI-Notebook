@@ -1,10 +1,32 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">VRAG8</div><h2>VRAG 的 embedding 模型和 reranker 模型用的是什么</h2></div>
+          <p>从当前源码看，VRAG 明确实现了 embedding 检索模型接入，但<strong>没有实现独立 reranker 模型</strong>。排序主要靠 FAISS inner product 分数。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>embedding：默认 Qwen3-VL-Embedding-2B</h3>
+              <p><code class="inline">search_engine/search_engine_api.py</code> 里写死 <code class="inline">model_path = "Qwen3-VL-Embedding-2B"</code>。<code class="inline">search_engine/search_engine.py</code> 的 main 示例也初始化 <code class="inline">SearchEngine("Qwen3-VL-Embedding-2B")</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>embedding：可选 GVE-3B / GVE-7B</h3>
+              <p>README 支持 <code class="inline">Alibaba-NLP/GVE-3B</code>，维度 2048；<code class="inline">Alibaba-NLP/GVE-7B</code>，维度 3584。源码里 GVE 基于 Qwen2.5-VL embedding，支持 text/image/video 编码。</p>
+            </article>
+            <article class="mini-card">
+              <h3>embedding：可选 Qwen3-VL-Embedding-2B / 8B</h3>
+              <p>README 里列出 <code class="inline">Qwen/Qwen3-VL-Embedding-2B</code> 维度 2048，<code class="inline">Qwen/Qwen3-VL-Embedding-8B</code> 维度 4096。源码按名字里的 <code class="inline">2B/8B</code> 设置维度。</p>
+            </article>
+            <article class="mini-card">
+              <h3>文本 baseline：bge-m3</h3>
+              <p><code class="inline">SearchEngine</code> 也支持 <code class="inline">bge-m3</code> 分支，用 <code class="inline">SentenceTransformer</code>，维度 1024。但这是文本 embedding 路线，不是 VRAG 视觉检索的主线。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>GVE 和 Qwen3-VL Embedding 的向量生成方式也能从源码看出来：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">GVE：<code class="inline">AutoModelForSentenceEmbedding.encode()</code> 取最后一层 hidden state，支持 <code class="inline">last</code> 或 <code class="inline">mean</code> pooling，默认 normalize。</div>
+            <div class="flow-step" data-step="2">GVE 训练侧：<code class="inline">AutoModelForSentenceEmbeddingTriplet.forward()</code> 会编码 query、positive、negative，用 cross entropy 做对比学习；还计算 t2v 和 v2t 两个方向的 loss。</div>
+            <div class="flow-step" data-step="3">Qwen3-VL Embedding：<code class="inline">Qwen3VLEmbedder.process()</code> 把 text/image/video 包成 conversation，前向后取 attention mask 最后一个有效 token 的 hidden state，再 L2 normalize。</div>
+            <div class="flow-step" data-step="4">检索排序：这些 embedding 向量进入 <code class="inline">faiss.IndexFlatIP</code>，search 返回 inner product 分数。</div>
+          </div>
+
+          <div class="callout"><strong>reranker 结论：</strong>当前仓库没有看到独立的 reranker/cross-encoder 重排模块，也没有 search 后二阶段 rerank。VimRAG 的 <code class="inline">priority_score</code> 和 memory energy 是 agent 记忆筛选逻辑，不是传统检索 reranker。VRAG 的检索结果排序主要就是 embedding 相似度排序。</div>
+          <div class="refs">参考：<code class="inline">/root/VRAG/README.md:133-136</code>、<code class="inline">/root/VRAG/search_engine/search_engine.py:11-44</code>、<code class="inline">/root/VRAG/search_engine/search_engine_api.py:7-9</code>、<code class="inline">/root/VRAG/search_engine/models/GVE/models.py:133-184</code>、<code class="inline">/root/VRAG/search_engine/models/GVE/models.py:209-255</code>、<code class="inline">/root/VRAG/search_engine/models/Qwen3_VL_Embedding/qwen3_vl_embedding.py:363-393</code>。</div>

@@ -1,10 +1,96 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">06</div><h2>Hermes agentic RL 具体原理是什么：拿一个任务举例</h2></div>
+          <p>这里说的“内层真正 agentic RL”，不是 skills 那种应用层经验沉淀，而是<strong>让模型在任务环境里真实 rollout，用结果 reward 反向更新 LoRA 权重</strong>。Hermes 这套源码里，实际是通过 <code class="inline">Tinker + Atropos</code> 做：环境负责出题、采样、打分；trainer 负责把轨迹变成带 advantage 的训练样本；Tinker API 负责 LoRA forward/backward 和 optimizer step。</p>
+          <div class="callout"><strong>一句话：</strong>同一个任务 prompt 让模型采样多条解法 → 环境 verifier 给每条解法打 reward → 组内 reward 均值做 baseline 得到 advantage → 只对生成 token 施加带 advantage 的 importance-sampling loss → Tinker 更新 LoRA 权重 → 新权重再作为下一轮 sampler。</div>
+
+          <p>先看 Hermes/Tinker-Atropos 的真实链路：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>agent 选择环境。</strong>Hermes 的 RL 工具扫描 <code class="inline">tinker_atropos/environments/</code>，例如 <code class="inline">gsm8k</code> 环境。</div>
+            <div class="flow-step" data-step="2"><strong>生成训练配置。</strong><code class="inline">rl_start_training()</code> 用 locked config 写 <code class="inline">configs/run_*.yaml</code>，固定基础设施参数，例如 Qwen3-8B、LoRA rank 32、learning rate 4e-5、sglang inference server。</div>
+            <div class="flow-step" data-step="3"><strong>启动三进程。</strong>Hermes 依次启动 <code class="inline">run-api</code>、<code class="inline">launch_training.py</code> trainer、<code class="inline">environment.py serve</code>。Atropos API 在中间接环境和 trainer。</div>
+            <div class="flow-step" data-step="4"><strong>trainer 创建 LoRA 训练客户端。</strong><code class="inline">create_lora_training_client_async(base_model, rank)</code> 创建可训练 LoRA；随后 <code class="inline">save_weights_for_sampler(step_0)</code> 生成初始 sampling client。</div>
+            <div class="flow-step" data-step="5"><strong>环境 rollout。</strong>环境拿一道题，调用当前 sampling server，用 <code class="inline">n = group_size</code> 一次采多条 completion，并保存 tokens、masked_tokens、logprobs。</div>
+            <div class="flow-step" data-step="6"><strong>环境打分。</strong>verifier 比较模型答案和 gold answer。GSM8K 示例是 parse LaTeX boxed answer，然后 <code class="inline">verify(answer_parsed, gold_parsed)</code>，正确给 1，错误给 0。</div>
+            <div class="flow-step" data-step="7"><strong>trainer 转训练 Datum。</strong>每组 rollout 计算 <code class="inline">advantage = score - group_mean</code>；prompt token 的 advantage 置 0，只让生成 token 产生梯度。</div>
+            <div class="flow-step" data-step="8"><strong>Tinker 更新权重。</strong>调用 <code class="inline">forward_backward_async(data, loss_fn="importance_sampling")</code>，再 <code class="inline">optim_step_async(AdamParams(...))</code> 更新 LoRA。</div>
+            <div class="flow-step" data-step="9"><strong>新权重部署到采样。</strong>每 step 后 <code class="inline">save_weights_for_sampler(step_i)</code>，再 <code class="inline">create_sampling_client(model_path=new_path)</code>，下一批 rollout 用更新后的模型。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>拿一个具体任务举例：训练模型做 GSM8K 数学题。</p>
+          <pre><code>题目：A store has 12 apples. It sells 5 and buys 8 more. How many apples now?
+正确答案：15
+
+group_size = 4 时，同一个 prompt 采样 4 条：
+A: "12 - 5 + 8 = 15, boxed{15}"  reward=1
+B: "12 + 5 + 8 = 25, boxed{25}"  reward=0
+C: "12 - 5 = 7, boxed{7}"        reward=0
+D: "It has 15 apples, boxed{15}" reward=1
+
+group_mean = (1 + 0 + 0 + 1) / 4 = 0.5
+advantage:
+A = +0.5
+B = -0.5
+C = -0.5
+D = +0.5</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>正 advantage 在干什么</h3>
+              <p>A 和 D 的生成 token 会被增强：以后遇到类似状态，模型更倾向于生成这种推理和答案格式。它不是只记住“15”，而是把导致正确答案的 token 分布概率推高。</p>
+            </article>
+            <article class="mini-card">
+              <h3>负 advantage 在干什么</h3>
+              <p>B 和 C 的生成 token 会被压低：例如把“12 + 5 + 8”这种错误路径、漏掉买入步骤的路径概率降低。这样模型行为会从错误策略向正确策略偏移。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么要同题采多条</h3>
+              <p>同题多采样可以形成组内相对比较。不是简单“答对就加分”，而是看这组里哪些 trajectory 比平均好，哪些比平均差。GRPO / group baseline 的直觉就在这里。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么只训生成 token</h3>
+              <p>trainer 里 prompt token 的 logprob / advantage 被 padding 成无梯度位置。因为 prompt 是题目，不是模型动作；RL 要优化的是模型自己生成的 action token。</p>
+            </article>
+          </div>
+
+          <p>如果换成真正 agentic 任务，比如“在一个 repo 里修 bug 并通过测试”，原理完全一样，只是 environment 和 reward 更复杂：</p>
+          <pre><code>环境给任务：修复 pytest 失败的项目
+模型 rollout：
+  - 读文件
+  - edit_file 改代码
+  - terminal 跑 pytest
+  - 继续修
+  - 最终提交答案
+环境 reward：
+  tests all pass -> 1.0
+  部分测试 pass -> 0.3
+  没跑通 / 改坏格式 -> 0.0
+trainer：
+  同一任务采多条 agent trajectory
+  reward - group_mean = advantage
+  对成功轨迹里的决策 token 增强
+  对失败轨迹里的决策 token 压低
+Tinker：
+  更新 LoRA 权重
+  保存 sampler weights
+  下一轮 rollout 用新策略</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>它和 skills 的差异</h3>
+              <p>skills 是外层提示/文件机制：下次 prompt 里多一段经验。agentic RL 是内层权重机制：即使不给那段 skill，模型本身的 token 分布也被训练改过。</p>
+            </article>
+            <article class="mini-card">
+              <h3>它到底“学会”了什么</h3>
+              <p>不是把某个案例硬存进去，而是把“哪些中间行为更可能拿高 reward”压进 LoRA 参数。比如先读测试、定位失败、最小改动、跑验证、避免乱改这些策略，会通过大量任务统计进入权重。</p>
+            </article>
+            <article class="mini-card">
+              <h3>LoRA 改的是哪里</h3>
+              <p>源码里 Hermes 通过 Tinker 的 <code class="inline">create_lora_training_client_async(base_model, rank)</code> 创建 LoRA 训练客户端。具体插在哪些 transformer module 由 Tinker 服务侧封装；Hermes 侧控制 rank、learning rate、训练数据和 rollout/reward。</p>
+            </article>
+            <article class="mini-card">
+              <h3>训练后怎么用</h3>
+              <p>每 step 保存 sampler weights，并创建新的 sampling client；最终输出类似 <code class="inline">tinker://.../sampler_weights/final</code> 的权重路径。工程上再把这个 sampling endpoint / model path 包成模型 API 给 agent 调用。</p>
+            </article>
+          </div>
+
+          <div class="callout">最清楚的理解：Hermes agentic RL 的“agentic”在于 reward 来自完整任务执行结果，而不是单句答案；“RL”在于用 group reward advantage 更新 LoRA 权重，而不是只写一条 skill。具体到任务，就是奖励成功轨迹、惩罚失败轨迹，让模型下一次更倾向于走成功的行动序列。</div>
+          <div class="refs">参考：<code class="inline">/root/hermes/tools/rl_training_tool.py</code>、<code class="inline">/root/hermes/rl_cli.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/trainer.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/environments/gsm8k_tinker.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/config.py</code></div>

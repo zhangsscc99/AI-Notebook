@@ -1,10 +1,26 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">12</div><h2>如果 reward 只拿 exact 做奖励会怎么样</h2></div>
+          <p>如果只用 <code class="inline">exact</code>，reward 就会变成最硬的 0/1 判题：抽取出的 candidate 和 gold updated source 完全一致才给 1，否则给 0。这样很干净，但在 GRPO 里会有几个明显问题。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>最大问题：奖励太稀疏</h3>
+              <ul>
+                <li>早期模型大多数输出都不会完全一致，整个 group 可能全是 0。</li>
+                <li>如果同组 reward 全一样，<code class="inline">advantage = reward - mean</code> 接近 0，GRPO 基本没有学习信号。</li>
+                <li>tiny 数据下尤其明显：模型差一点点也和完全错一样，训练会很不稳定。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>还会惩罚“语义等价”</h3>
+              <p>代码任务里，两个实现可能语义等价但文本不完全一样。只用 exact 会把这些都判 0，例如变量名不同、等价重排、无害空行/注释差异，都可能被过度惩罚。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1">只用 exact：最准确，但最稀疏。</div>
+            <div class="flow-step" data-step="2">加 similarity：让“接近正确”的样本也有一点梯度方向。</div>
+            <div class="flow-step" data-step="3">加 tag/no_extra：让模型学会机器可解析输出格式。</div>
+            <div class="flow-step" data-step="4">加 syntax/judge：减少语法坏掉或语义等价被误杀的问题。</div>
+          </div>
+
+          <div class="callout">结论：只拿 exact 做 reward 可以作为最终严格指标，但不适合作为唯一训练 reward。训练期更适合 exact 为主、similarity / tag_format / no_extra_prose / syntax / judge 辅助，避免 GRPO 没信号或过度脆弱。</div>

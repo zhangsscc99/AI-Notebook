@@ -1,10 +1,46 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">WAN8</div><h2>Wan2.2 到底是在预测 latent 吗，还是视觉编码器拼接 LLM</h2></div>
+          <p>结论先说：<strong>Wan2.2 主要是在预测视频 latent 的去噪方向，不是“视觉编码器拼接 LLM”</strong>。它不是一个把视觉 token 接到语言模型后面继续做文本自回归的大模型，而是一个视频 latent 扩散 / flow matching 系统：文本条件先经 T5 编码，视频或首帧图像先经 VAE 压缩成 latent，然后 WanModel 在 latent 空间里做多步去噪，最后再由 VAE 解码成视频帧。</p>
+          <div class="callout"><strong>一句话：</strong>Wan2.2 的生成核心是视频 latent denoising。T5 负责文本条件，VAE 负责压缩和解码，WanModel 负责在 latent 空间里迭代更新；它不是“视觉 encoder + LLM”的拼装体。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>文本走 T5，不走 LLM decoder。</strong><code class="inline">WanT2V</code> 和 <code class="inline">WanI2V</code> 都先调用 <code class="inline">T5EncoderModel</code>，把 prompt 变成 <code class="inline">context</code> 和 <code class="inline">context_null</code>。</div>
+            <div class="flow-step" data-step="2"><strong>视觉内容先压成 latent。</strong>在 image / text-image / TI2V 路径里，输入图像会先走 <code class="inline">vae.encode([img])</code>，变成 latent 条件 <code class="inline">y</code>。这一步是进入视频 latent 空间，不是拼到 LLM hidden states 上。</div>
+            <div class="flow-step" data-step="3"><strong>主干是 WanModel。</strong><code class="inline">wan/modules/model.py</code> 里的 <code class="inline">WanModel</code> 用 <code class="inline">Conv3d</code> 做 3D patch embedding，再用 self-attention / cross-attention 在视频 latent token 上建模。</div>
+            <div class="flow-step" data-step="4"><strong>模型预测的是更新量。</strong>采样循环中，WanModel 输出 <code class="inline">noise_pred</code> 或 latent 的更新方向，scheduler 再把当前 noisy latent 推向更干净的状态。</div>
+            <div class="flow-step" data-step="5"><strong>最后由 VAE 解码。</strong>采样结束后，<code class="inline">self.vae.decode(x0)</code> 把 clean latent 变成 RGB 视频张量，真正的视频文件在这一步之后才生成。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么不是“视觉 encoder 拼接 LLM”</h3>
+              <p>如果是典型 VLM / MLLM，结构通常是 vision encoder 产出视觉 token，再通过 projector 接到 LLM，让 LLM 继续做文本生成。Wan2.2 没有这条路：它不把图像 token 交给语言模型续写，也不让 LLM 逐 token 生成视频。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么也不是直接预测像素帧</h3>
+              <p>源码里先算 <code class="inline">target_shape</code>，用 <code class="inline">torch.randn</code> 初始化视频 latent，再在 latent 空间采样。像素帧只在最后 decode 阶段出现，所以它不是像普通自回归模型那样直接回归 RGB。</p>
+            </article>
+            <article class="mini-card">
+              <h3>视频里真正被预测的是什么</h3>
+              <p>在 diffusion / flow matching 里，模型通常预测噪声方向、velocity 或 latent 更新量。你可以把它理解成“学会把当前 noisy latent 往更像真实视频的方向推”，而不是“预测下一个文本 token”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>图像输入在系统里扮演什么</h3>
+              <p>图像更像条件约束或首帧锚点。它先被 VAE 压缩成 latent 条件，再在去噪过程中约束主体、构图和运动延续，而不是作为视觉 encoder 的输出直接拼进 LLM decoder。</p>
+            </article>
+          </div>
+
+          <pre><code>更准确的心智模型：
+
+文本 prompt -> T5 encoder -> context
+输入图片/首帧 -> VAE encode -> latent condition y
+随机视频 latent -> WanModel / DiT -> 预测 latent 去噪方向
+scheduler.step -> 更新 latent
+VAE decode -> RGB video
+
+这条链路里：
+- 没有把视觉 encoder 输出拼接给 LLM 做续写
+- 没有让 LLM 直接生成视频像素
+- 核心生成空间是视频 latent，不是文本 token</code></pre>
+
+          <div class="callout">所以如果你问“Wan2.2 是不是预测 latent”，答案是<strong>是</strong>，但更精确地说是预测<strong>视频 latent 的去噪/更新方向</strong>；如果你问“是不是视觉编码器拼接 LLM”，答案是<strong>不是</strong>，它是一个以 T5 + VAE + Video DiT 组成的条件生成系统。</div>
+          <div class="refs">参考源码：<code class="inline">/root/Wan2.2/wan/text2video.py:268-275</code>、<code class="inline">/root/Wan2.2/wan/text2video.py:286-318</code>、<code class="inline">/root/Wan2.2/wan/image2video.py:303-325</code>、<code class="inline">/root/Wan2.2/wan/textimage2video.py:300-323</code>、<code class="inline">/root/Wan2.2/wan/modules/model.py:1-260</code>、<code class="inline">/root/Wan2.2/wan/modules/model.py:294-520</code>、<code class="inline">/root/Wan2.2/generate.py:345-454</code>。</div>

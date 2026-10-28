@@ -1,10 +1,22 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">27</div><h2>memory 写入机制</h2></div>
+          <p>OpenClaw 的 memory 写入分两类：一类是<strong>用户或模型把内容写进 durable memory 文件</strong>，另一类是<strong>索引器把文件内容写进搜索 index</strong>。这两件事不要混在一起。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>durable 文件写入</h3>
+              <p>真正长期保留的信息应该追加到 <code class="inline">memory/YYYY-MM-DD.md</code> 或维护在 <code class="inline">MEMORY.md</code>。memory flush 明确要求 append，不要覆盖。</p>
+            </article>
+            <article class="mini-card">
+              <h3>pre-compaction flush</h3>
+              <p>临近 compaction 时，OpenClaw 可运行 silent memory flush，让模型把本轮值得长期保存的信息写到当天 memory 文件；如果没东西保存则返回 silent token。</p>
+            </article>
+            <article class="mini-card">
+              <h3>索引写入</h3>
+              <p>sync 后 <code class="inline">indexFile</code> 会 chunk 文件、生成 embedding、写 <code class="inline">chunks</code>、<code class="inline">chunks_fts</code>、可选 <code class="inline">chunks_vec</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>后台整理写入</h3>
+              <p>dreaming / promotion 会记录短期召回信号和 dream report，把可能有价值的信息整理成候选长期记忆。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <div class="callout">判断“写 memory”是哪一种：如果写的是 markdown 文件，那是 durable memory；如果写的是 SQLite/QMD，那是检索索引，可以重建。</div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/flush-plan.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-embedding-ops.ts</code>、<code class="inline">extensions/memory-core/src/short-term-promotion.ts</code>、<code class="inline">extensions/memory-core/src/dreaming*.ts</code></div>

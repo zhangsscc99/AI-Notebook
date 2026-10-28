@@ -1,10 +1,137 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">C7</div><h2>怎么用 LangGraph 实现类似 Claude Code 的工作流编排</h2></div>
+          <p>如果用 LangGraph 复刻 Claude Code 的工作流，不要把它设计成“一个大 agent prompt”。更稳的设计是把 Claude Code 里的隐式循环显式拆成一张有状态图：<strong>主会话状态、模型决策节点、工具执行节点、权限/hook 节点、子代理调度节点、压缩/恢复节点、最终汇总节点</strong>。</p>
+          <div class="callout"><strong>核心映射：</strong>Claude Code 的 <code class="inline">QueryEngine + query loop + tool orchestration + AgentTool + coordinator</code>，在 LangGraph 里可以映射成 <code class="inline">StateGraph</code>、conditional edges、tool executor node、checkpoint、interrupt/human approval、Send/Command 式并行分支和 supervisor/worker 子图。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. State 是 QueryEngine</h3>
+              <p>用一个 TypedDict/Pydantic state 保存 messages、cwd、工具权限、任务列表、worker 状态、transcript、token/预算、是否需要 compact、最后一次 tool_calls、错误和中断信号。LangGraph 的 checkpoint 用来替代 Claude Code transcript/resume 的一部分能力。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. LLM node 是 query() 的模型调用</h3>
+              <p><code class="inline">call_model</code> 节点读取 state.messages 和 system context，调用带工具绑定的模型。如果返回 tool_calls，就走工具分支；如果没有 tool_calls，就进入 stop-hook/verification/final 分支。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. Tool node 是 toolOrchestration</h3>
+              <p><code class="inline">execute_tools</code> 节点负责 schema 校验、权限判断、hook、真正执行工具、把 tool_result 追加回 messages。读类工具可以并行，写类工具按资源锁串行。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. Supervisor 是 coordinator</h3>
+              <p>复杂任务不要让一个 agent 顺序做完，而是让 supervisor 节点先拆任务，给 research / implementation / verification worker 子图发任务，再综合结果决定继续、重试、停止还是汇报。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>一张比较接近 Claude Code 的 LangGraph 图可以这样设计：</p>
+          <pre><code>START
+  -> ingest_user_input
+  -> load_context_and_memory
+  -> maybe_compact
+  -> supervisor_or_call_model
+      -> if normal single-agent turn: call_model
+      -> if complex task: plan_and_dispatch_workers
+
+call_model
+  -> if tool_calls: permission_and_hooks
+  -> if final_answer: stop_hooks_or_finish
+
+permission_and_hooks
+  -> execute_tools
+  -> append_tool_results
+  -> maybe_compact
+  -> call_model
+
+plan_and_dispatch_workers
+  -> research_worker(s) in parallel
+  -> synthesize_findings
+  -> implementation_worker
+  -> verification_worker
+  -> final_report</code></pre>
+
+          <p>设计时最关键的是把“节点职责”切干净：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>ingest_user_input：</strong>解析用户输入、slash command、文件附件、环境信息，写入 state.messages。</div>
+            <div class="flow-step" data-step="2"><strong>load_context_and_memory：</strong>加载项目说明、rules、memory、git status、MCP/tool registry，形成 system/user context。</div>
+            <div class="flow-step" data-step="3"><strong>maybe_compact：</strong>检查 token 预算；如果超限，调用 summary/compact 节点，把旧消息压缩成 compact boundary。</div>
+            <div class="flow-step" data-step="4"><strong>call_model：</strong>让模型决定下一步：回答、调用工具、请求子代理、进入 plan mode、或要求用户确认。</div>
+            <div class="flow-step" data-step="5"><strong>permission_and_hooks：</strong>对 tool call 做 schema 校验、policy 判断、pre-hook、人类审批 interrupt、输入改写。</div>
+            <div class="flow-step" data-step="6"><strong>execute_tools：</strong>按工具并发安全性执行；读操作可 fan-out，写操作按文件路径加锁。</div>
+            <div class="flow-step" data-step="7"><strong>worker_subgraph：</strong>每个 worker 是一个独立子图，有自己的 messages、tools、cwd、权限和 checkpoint。</div>
+            <div class="flow-step" data-step="8"><strong>synthesize/final：</strong>supervisor 综合 worker 输出，生成下一轮 worker prompt 或最终给用户的报告。</div>
+          </div>
+
+          <p>伪代码可以长这样：</p>
+          <pre><code>from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.types import Command, Send, interrupt
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]
+    cwd: str
+    permission_mode: str
+    tool_calls: list
+    worker_results: list
+    todos: list
+    compact_needed: bool
+    final: str | None
+
+async def call_model(state: AgentState):
+    response = await model_with_tools.ainvoke(state["messages"])
+    return {"messages": [response], "tool_calls": response.tool_calls}
+
+def route_after_model(state: AgentState):
+    if state.get("tool_calls"):
+        return "permission_and_hooks"
+    return "stop_hooks_or_finish"
+
+async def permission_and_hooks(state: AgentState):
+    for call in state["tool_calls"]:
+        if is_risky(call):
+            decision = interrupt({"kind": "permission", "tool_call": call})
+            if decision["action"] != "allow":
+                return {"messages": [make_denial_result(call)]}
+    return {}
+
+async def execute_tools(state: AgentState):
+    results = await run_read_tools_parallel_write_tools_serial(state["tool_calls"])
+    return {"messages": results, "tool_calls": []}
+
+def dispatch_workers(state: AgentState):
+    tasks = decompose_task(state["messages"])
+    return [Send("worker_subgraph", {"messages": [task.prompt], "cwd": state["cwd"]}) for task in tasks]
+
+graph = StateGraph(AgentState)
+graph.add_node("call_model", call_model)
+graph.add_node("permission_and_hooks", permission_and_hooks)
+graph.add_node("execute_tools", execute_tools)
+graph.add_node("worker_subgraph", worker_graph)
+graph.add_node("synthesize", synthesize_worker_results)
+
+graph.add_edge(START, "call_model")
+graph.add_conditional_edges("call_model", route_after_model)
+graph.add_edge("permission_and_hooks", "execute_tools")
+graph.add_edge("execute_tools", "call_model")
+graph.add_edge("synthesize", END)
+app = graph.compile(checkpointer=checkpointer)</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>权限怎么做</h3>
+              <p>Claude Code 的权限系统在工具执行前。LangGraph 里应单独建 <code class="inline">permission_and_hooks</code> 节点：先走 policy/allowlist，再用 <code class="inline">interrupt()</code> 做 human-in-the-loop 审批，批准后把可能被用户修改的 input 写回 state。</p>
+            </article>
+            <article class="mini-card">
+              <h3>并发怎么做</h3>
+              <p>Claude Code 会并发跑 concurrency-safe 工具。LangGraph 里可以把只读工具拆成多个 <code class="inline">Send</code> 分支，或者在一个 executor 节点内部用 asyncio 并发；写工具则按 file_path / resource key 加锁串行。</p>
+            </article>
+            <article class="mini-card">
+              <h3>子代理怎么做</h3>
+              <p>每个 worker 用一个子图：自己的 state、system prompt、tool pool、checkpoint namespace。Supervisor 只拿 worker summary，不把所有原始工具输出塞回主上下文，避免污染主 agent。</p>
+            </article>
+            <article class="mini-card">
+              <h3>恢复怎么做</h3>
+              <p>用 checkpointer 保存每个 turn 的 state；长任务、worker、人工审批都可以恢复。对于工具副作用，要额外记录 tool_call_id、幂等键、文件快照或 patch，避免 resume 后重复执行危险写操作。</p>
+            </article>
+          </div>
+
+          <div class="callout">设计原则：LangGraph 负责“可控状态机”，LLM 只负责“决策下一步”。把权限、并发、子代理、压缩、恢复都放进显式节点，不要藏在 prompt 里；这样才接近 Claude Code 那种可恢复、可审计、可并行、可人工接管的工作流编排。</div>
+          <div class="refs">参考：LangGraph 官方文档的 <code class="inline">StateGraph</code>、checkpoint/persistence、human-in-the-loop interrupt、Command/Send、多代理 supervisor/swarm 设计；对照本地 Claude Code 源码 <code class="inline">src/query.ts</code>、<code class="inline">src/services/tools/toolOrchestration.ts</code>、<code class="inline">src/tools/AgentTool/runAgent.ts</code>、<code class="inline">src/coordinator/coordinatorMode.ts</code>。</div>

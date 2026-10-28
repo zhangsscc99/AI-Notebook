@@ -1,10 +1,60 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">HS1</div><h2>概览：Hermes Agent 里面是不是有沙箱</h2></div>
+          <p>有。Hermes 里的“沙箱”不是单一一种东西，而是分成几层：<strong>终端执行沙箱</strong>、<strong>代码执行沙箱</strong>、<strong>文件工具跨后端沙箱适配</strong>、以及<strong>浏览器运行时的 sandbox 处理</strong>。最重要的是前两类。</p>
+          <div class="callout"><strong>一句话：</strong>Hermes 的沙箱核心在 terminal backend。命令可以跑在 local，也可以跑在 Docker、Singularity、Modal、Daytona、Vercel Sandbox、SSH 这些隔离或远程环境里；execute_code 又在这个基础上再包一层 Python 脚本沙箱和工具 RPC。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先选 backend。</strong><code class="inline">terminal_tool.py</code> 支持 <code class="inline">local</code>、<code class="inline">docker</code>、<code class="inline">singularity</code>、<code class="inline">modal</code>、<code class="inline">daytona</code>、<code class="inline">vercel_sandbox</code>、<code class="inline">ssh</code>。</div>
+            <div class="flow-step" data-step="2"><strong>再创建执行环境。</strong>非 local 后端会创建容器、云沙箱或远端执行环境；Hermes 用 task_id / sandbox key 把一次任务和对应环境关联起来。</div>
+            <div class="flow-step" data-step="3"><strong>终端和文件工具走同一后端。</strong>file tools 不是只读本机文件，而是通过 terminal backend 的 execute 接口适配 Docker、Modal、Daytona 等环境。</div>
+            <div class="flow-step" data-step="4"><strong>execute_code 再包一层。</strong>它把用户 Python 代码放进临时 sandbox 目录，生成受限的 <code class="inline">hermes_tools.py</code>，只允许调用白名单工具，并过滤 secrets。</div>
+            <div class="flow-step" data-step="5"><strong>长期任务也按沙箱记录。</strong>process_registry 会区分 host PID 和 sandbox PID；非 local 后端会在沙箱内部启动、轮询、停止任务。</div>
+            <div class="flow-step" data-step="6"><strong>浏览器是另一类隔离。</strong>browser_tool 会在某些环境下注入 <code class="inline">--no-sandbox</code> 等 Chromium 参数，这是浏览器进程自己的 sandbox 兼容处理，不等同于 terminal sandbox。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>1. 终端沙箱：Hermes 最核心的隔离层</h3>
+              <p><code class="inline">tools/terminal_tool.py</code> 明确把执行后端抽象成多种环境：local 是本机直跑；Docker / Singularity 是容器；Modal / Daytona / Vercel Sandbox 是云端沙箱；SSH 是远端机器。README 也把这些称为 terminal backends。</p>
+              <p>所以问“有没有沙箱”，答案是：<strong>有，但取决于你配置的 terminal backend</strong>。如果 backend 是 local，那命令就在本机跑；如果是 Docker / Modal / Daytona / Vercel，就进入隔离环境。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 配置层：不是默认全都隔离</h3>
+              <p><code class="inline">cli-config.yaml.example</code> 里有 terminal backend 配置示例。比如 Docker 后端可以显式设置 image、volume、是否把当前目录 mount 到 <code class="inline">/workspace</code>；这个 mount 选项默认关闭，因为它会把宿主工作目录暴露给容器。</p>
+              <div class="callout">这点很关键：Hermes 支持沙箱，但不是说所有操作天然都在安全容器里。安全边界来自 backend 选择和配置。</div>
+            </article>
+            <article class="mini-card">
+              <h3>3. execute_code：Python 子进程沙箱</h3>
+              <p><code class="inline">tools/code_execution_tool.py</code> 是另一层。它会创建临时目录，例如 <code class="inline">hermes_sandbox_*</code> 或远端 <code class="inline">hermes_exec_*</code>，把脚本和受限 RPC 工具模块放进去执行。</p>
+              <p>这个沙箱还会限制可调用工具集合，只暴露白名单里的工具，并且对环境变量和输出做 secret redaction，避免脚本直接读到 API key、token 等敏感信息。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 文件工具跟着后端走</h3>
+              <p><code class="inline">tools/file_operations.py</code> 的设计是跨 terminal backend 工作。也就是说，如果 terminal backend 是 Docker 或 Modal，文件读写/search/patch 等也应该作用在那个环境里，而不是误读宿主机路径。</p>
+              <p>这就是 Hermes 设计里的一个重要点：terminal、file、background process 尽量共享同一个执行环境语义。</p>
+            </article>
+            <article class="mini-card">
+              <h3>5. 后台任务也有沙箱意识</h3>
+              <p><code class="inline">tools/process_registry.py</code> 会记录进程是在 host 还是 sandbox 里。对 Docker、Modal、Daytona、SSH 这类非 local 后端，它会在沙箱内部启动命令、记录沙箱内 PID，并通过后续 execute 调用轮询日志或停止进程。</p>
+            </article>
+            <article class="mini-card">
+              <h3>6. RL / benchmark 里也会用隔离沙箱</h3>
+              <p><code class="inline">environments/hermes_base_env.py</code> 和 terminal test env 里能看到，RL rollout 或 benchmark 会给每个任务配置 terminal backend，例如 Modal 云沙箱。这样不同 rollout 不共享同一个本机执行环境。</p>
+            </article>
+          </div>
+
+          <pre><code>Hermes sandbox layers
+  terminal backend
+    -> local / docker / singularity / modal / daytona / vercel_sandbox / ssh
+  file operations
+    -> execute through the active terminal backend
+  execute_code
+    -> temporary script sandbox
+    -> restricted hermes_tools.py RPC
+    -> secret stripping / output redaction
+  background tasks
+    -> host PID or sandbox PID tracking
+  browser runtime
+    -> Chromium sandbox compatibility flags when needed</code></pre>
+
+          <div class="callout">最短答案：<strong>Hermes 有沙箱能力，但它是后端驱动的。真正隔离强弱取决于 terminal backend；execute_code 在此基础上再做一层 Python 执行沙箱。</strong></div>
+          <div class="refs">参考：<code class="inline">/root/hermes/tools/terminal_tool.py</code>、<code class="inline">/root/hermes/tools/code_execution_tool.py</code>、<code class="inline">/root/hermes/tools/file_operations.py</code>、<code class="inline">/root/hermes/tools/process_registry.py</code>、<code class="inline">/root/hermes/cli-config.yaml.example</code>、<code class="inline">/root/hermes/README.md</code></div>

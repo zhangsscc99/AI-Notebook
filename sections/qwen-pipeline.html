@@ -1,10 +1,59 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">01</div><h2>千问强化学习：整个训练 pipeline</h2></div>
+          <p><code class="inline">qwen_rlhf</code> 已克隆到 <code class="inline">/root/OpenClaw/src/qwen_rlhf</code>，与 <code class="inline">/root/OpenClaw/src/memory</code> 平级。这个项目的核心不是 UI，而是一条完整的代码编辑模型训练流水线：<strong>准备底座模型 → 构造半合成编辑数据 → SFT 监督微调 → 离线生成与评测 → 可选 GRPO/RLHF 强化优化</strong>。</p>
+
+          <div class="callout"><strong>一句话：</strong>它把 Qwen2.5-Coder-3B-Instruct 训练成一个“代码 patch 合并器”：输入原始 Python 文件和 SEARCH/REPLACE 更新块，输出合并后的完整代码，并包在 <code class="inline">&lt;updated&gt;...&lt;/updated&gt;</code> 中。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>下载/检查底座模型。</strong>用 <code class="inline">scripts/download_model.py</code> 下载 <code class="inline">Qwen2.5-Coder-3B-Instruct</code>，优先 ModelScope，失败时可走 Hugging Face；再用 <code class="inline">check_model_ready.py</code> 检查 tokenizer、config、safetensors shard 是否齐全。</div>
+            <div class="flow-step" data-step="2"><strong>构造训练数据。</strong><code class="inline">scripts/build_semisynth_dataset.py</code> 读取 <code class="inline">configs/dataset_semisynth.yaml</code>，从 CommitPackFT 流式读取提交样本，只保留单文件 Python、小范围、许可证允许、非 merge/revert/chore/lint 的修改。</div>
+            <div class="flow-step" data-step="3"><strong>把 before/after 转成 patch 任务。</strong><code class="inline">src/qwen_edit/patching.py</code> 用 <code class="inline">difflib.SequenceMatcher</code> 生成 <code class="inline">PatchHunk(search, replace)</code>，再用 <code class="inline">apply_hunks()</code> 反向校验：search 必须唯一命中，替换后必须精确等于 after。</div>
+            <div class="flow-step" data-step="4"><strong>写出 JSONL 数据集。</strong>合格样本会写到 <code class="inline">data/processed/semisynth_train.jsonl</code> 和 <code class="inline">semisynth_valid.jsonl</code>。每条样本包含 instruction、before_code、after_code、source、input_patch、target_updated、target_patch、metadata。</div>
+            <div class="flow-step" data-step="5"><strong>渲染 SFT prompt。</strong><code class="inline">src/qwen_edit/sft_dataset.py</code> 把样本变成 chat：system 说明模型是代码更新合并助手；user 给 Source Code 和 Update Patch；target 是 <code class="inline">&lt;updated&gt;最终代码&lt;/updated&gt;</code>。</div>
+            <div class="flow-step" data-step="6"><strong>LoRA SFT 训练。</strong><code class="inline">scripts/train_sft.py</code> 加载 Qwen，按 <code class="inline">configs/sft_lora.yaml</code> 启用 LoRA；target modules 覆盖 q/k/v/o projection 和 gate/up/down projection；可选 4bit NF4 量化、bf16、gradient checkpointing。</div>
+            <div class="flow-step" data-step="7"><strong>生成预测。</strong>训练后用 <code class="inline">scripts/generate_predictions.py</code> 加载 SFT 模型，对验证集逐条生成 <code class="inline">&lt;updated&gt;</code> 结果，写出 predictions JSONL。</div>
+            <div class="flow-step" data-step="8"><strong>离线评测。</strong><code class="inline">scripts/eval_offline.py</code> 调用 <code class="inline">src/qwen_edit/eval.py</code>，统计 parse_ok、exact_match、syntax_ok、minimality：既看格式是否正确，也看最终代码是否精确匹配、语法是否通过、改动是否足够小。</div>
+            <div class="flow-step" data-step="9"><strong>可选 GRPO/RLHF。</strong><code class="inline">scripts/train_grpo.py</code> 使用 <code class="inline">trl.GRPOTrainer</code>，把 SFT 模型作为起点，用 reward 函数继续优化输出格式、patch 可应用性、语法正确性和最小改动。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>整条链路可以压缩成下面这张图：</p>
+          <pre><code>Qwen2.5-Coder-3B-Instruct
+  ↓ download_model.py / check_model_ready.py
+CommitPackFT raw samples
+  ↓ build_semisynth_dataset.py
+filter_commitpack_sample()
+  ↓
+make_hunks() -> format_patch() -> apply_hunks() 校验
+  ↓
+semisynth_train.jsonl / semisynth_valid.jsonl
+  ↓ sft_dataset.py
+chat prompt + &lt;updated&gt; target
+  ↓ train_sft.py
+LoRA SFT adapter / fine-tuned model
+  ↓ generate_predictions.py
+predictions.jsonl
+  ↓ eval_offline.py
+parse_ok / exact_match / syntax_ok / minimality
+  ↓ optional train_grpo.py
+GRPO/RLHF optimized model</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么先 SFT</h3>
+              <p>SFT 先让模型学会固定任务格式：读源码、读 patch、输出完整更新代码。如果没有这个阶段，RL 的 reward 很容易只惩罚错误，却无法稳定教会基本行为。</p>
+            </article>
+            <article class="mini-card">
+              <h3>RLHF 优化什么</h3>
+              <p>GRPO 阶段不是重新定义任务，而是在 SFT 基础上强化四件事：输出可解析、patch 可应用、应用后语法正确、改动规模接近 gold。</p>
+            </article>
+            <article class="mini-card">
+              <h3>数据质量关键点</h3>
+              <p>项目严格过滤提交，并要求生成的 hunk 能唯一匹配和精确还原 after。这样训练数据不是“看起来像 diff”，而是真正可执行、可校验的编辑任务。</p>
+            </article>
+            <article class="mini-card">
+              <h3>当前成熟度</h3>
+              <p>README 明确说 GRPO 先是骨架，真正开训前还要对齐硬件和 reward 细节。因此当前最完整的是数据构建、SFT、生成预测、离线评测链路。</p>
+            </article>
+          </div>
+
+          <div class="callout">最重要的理解：这个项目训练的不是“会聊天的 Qwen”，而是“能可靠执行代码编辑合并的 Qwen”。SFT 负责学会任务，GRPO/RLHF 负责把输出变得更可解析、更可应用、更正确、更少乱改。</div>
+          <div class="refs">参考：<code class="inline">src/qwen_rlhf/README.md</code>、<code class="inline">src/qwen_rlhf/configs/*.yaml</code>、<code class="inline">src/qwen_rlhf/scripts/build_semisynth_dataset.py</code>、<code class="inline">src/qwen_rlhf/scripts/train_sft.py</code>、<code class="inline">src/qwen_rlhf/scripts/train_grpo.py</code>、<code class="inline">src/qwen_rlhf/src/qwen_edit/*.py</code></div>

@@ -1,10 +1,36 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">07</div><h2>这个训练需要多少显存、资源和什么卡配置</h2></div>
+          <p>本次实际训练跑在 MinT 远程服务上，本地服务器不需要 GPU；本地只负责构造数据、发起采样和训练请求。真正显存消耗在 MinT 侧，取决于 Qwen3 4B、LoRA rank、sequence length、group size、batch size 和是否并发采样。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>本次 tiny smoke 的资源形态</h3>
+              <ul>
+                <li>模型：<code class="inline">Qwen/Qwen3-4B-Instruct-2507</code></li>
+                <li>LoRA rank：16</li>
+                <li>group：1 policy sample + 1 oracle rollout</li>
+                <li>GRPO datums：2</li>
+                <li>response tokens：145</li>
+                <li>本地 GPU：不需要</li>
+                <li>耗时：约 40 分钟级别，主要花在远程 4B 采样和 GRPO step。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>如果自己部署训练</h3>
+              <ul>
+                <li><strong>最低实验</strong>：单张 24GB 卡可能只能做很小 batch、短序列、LoRA/量化/gradient checkpointing。</li>
+                <li><strong>舒适实验</strong>：单张 48GB 或 80GB 卡更合适，能容纳更长上下文和更大 group。</li>
+                <li><strong>正式 GRPO</strong>：建议多卡或远程训练服务，因为 rollout sampling + policy update 会叠加吞吐压力。</li>
+                <li><strong>推理采样</strong>：还要给 sampler 留显存；GRPO 不只是训练，还要反复生成候选。</li>
+              </ul>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1">显存主要来自 base model 权重、KV cache、activation、LoRA 参数与 optimizer state。</div>
+            <div class="flow-step" data-step="2">sequence 越长，activation 和 KV cache 越大；FastApply 长文件场景会明显吃资源。</div>
+            <div class="flow-step" data-step="3">group size 越大，采样吞吐和训练 batch 都变重，但 advantage 更稳定。</div>
+            <div class="flow-step" data-step="4">rank 越大，LoRA 参数和 optimizer state 增加，但相对 4B base 权重仍是小头。</div>
+          </div>
+
+          <div class="callout">实操建议：用 MinT 远程训练时，本地不用配 GPU；如果自建，Qwen3 4B + LoRA + GRPO 建议至少从 48GB 级别 GPU 做舒适实验，正式长上下文/多 group 训练优先用 80GB 或多卡。</div>
+          <div class="refs">注意：这是工程估算；实际显存还会受框架、精度、上下文长度、batch packing、checkpointing、optimizer 和采样并发影响。</div>

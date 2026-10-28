@@ -1,10 +1,52 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">H1</div><h2>Hermes Agent 的 agentic RL：skills 外层 vs 训练内层</h2></div>
+          <p>按你这个划分，更准确的说法是：</p>
+          <div class="callout"><strong>外层</strong>不是普通 orchestration，而是<strong>agent 应用层面的拟 agentic RL</strong>，核心就是 <strong>skills 机制</strong>；<strong>内层</strong>才是<strong>真正的 agentic RL 训练闭环</strong>。</div>
+          <div class="flow">
+            <div class="flow-step" data-step="1">外层 skills 给 agent 一套任务化能力包：专门 prompt、工作流程、工具使用套路、约束、最佳实践。</div>
+            <div class="flow-step" data-step="2">它会让 agent 看起来越来越像“学会了某种能力”——比如会排查、会研究、会搭建、会编排。</div>
+            <div class="flow-step" data-step="3">但这层本质上没有 reward 驱动的参数更新，所以它更接近应用层的“拟 agentic RL”或“伪 agentic 强化实践”。</div>
+            <div class="flow-step" data-step="4">真正的 agentic RL 发生在训练内层：rollout → reward → batch → advantage → loss update → 新 policy → 下一轮 rollout。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>外层：skills 机制 = 应用层拟 agentic RL</h3>
+              <ul>
+                <li>Hermes 的 <code class="inline">skills/</code> 和 <code class="inline">optional-skills/</code> 提供一套可插拔能力包。</li>
+                <li>每个 skill 本质上是在给 agent 注入<strong>任务结构、流程模板、工具套路、领域知识、操作边界</strong>。</li>
+                <li>所以 agent 用了 skill 以后，会表现得像“经过某类任务训练”，但其实主要是<strong>prompt/runtime/tooling 层面的行为塑形</strong>。</li>
+                <li>这层很像“应用层强化”：不断把 agent 包装得更会做事，但并没有发生真正的 reward-driven weight update。</li>
+                <li>因此如果你要叫它外层，最准确就是：<strong>skills 是 Hermes 在 agent 应用层做的拟 agentic RL 机制</strong>。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>内层：真 agentic RL 训练</h3>
+              <ul>
+                <li>真正的训练核心在 <code class="inline">tinker-atropos</code> 和 Atropos environment。</li>
+                <li>示例环境 <code class="inline">gsm8k_tinker.py</code> 会 <code class="inline">collect_trajectories()</code>，一次采多条回答并保留 token / mask / logprob。</li>
+                <li><code class="inline">score()</code> 根据答案正确性给 reward；trainer 再从 <code class="inline">/batch</code> 拉回 rollout。</li>
+                <li><code class="inline">pad_data_to_good_offset()</code> 构造 <code class="inline">advantage = score - group_mean</code>。</li>
+                <li><code class="inline">train_step()</code> 调 <code class="inline">forward_backward_async(..., loss_fn=&quot;importance_sampling&quot;)</code> 和 <code class="inline">optim_step_async</code>，完成真正的参数更新。</li>
+                <li>更新后的 sampler weights 会立刻进入下一轮 rollout，所以这里存在真实的 policy improvement 闭环。</li>
+              </ul>
+            </article>
+          </div>
+          <pre><code>外层（应用层拟 agentic RL）
+  skills
+    -> prompt scaffolding
+    -> workflow template
+    -> tool-use routine
+    -> domain-specific operating pattern
+    -> 让 agent 看起来更会做事
+    -> 但不直接更新模型参数
+
+内层（真正的 agentic RL）
+  rollout
+    -> reward
+    -> batch
+    -> advantage = score - group_mean
+    -> importance_sampling loss
+    -> optimizer step
+    -> new sampler weights
+    -> next rollout</code></pre>
+          <div class="callout">所以最贴切的总结是：<strong>Hermes 的外层 agentic 感主要来自 skills 机制；Hermes 的内层 agentic RL 才来自 Tinker-Atropos / Atropos 这套真正的训练闭环。</strong></div>
+          <div class="refs">参考：<code class="inline">/root/hermes/skills/</code>、<code class="inline">/root/hermes/optional-skills/</code>、<code class="inline">/root/hermes/rl_cli.py</code>、<code class="inline">/root/hermes/tools/rl_training_tool.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/environments/gsm8k_tinker.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/trainer.py</code></div>

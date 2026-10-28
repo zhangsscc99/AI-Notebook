@@ -1,10 +1,130 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">07</div><h2>Hermes 的内层自进化 agentic RL 怎么做：源码链路和具体案例</h2></div>
+          <p>这里的“内层自进化”要和前面说的 skills 分开看。skills 是运行时外层：把一次任务经验写成文件，下次 prompt 里加载。Hermes 的内层 agentic RL 是训练层：<strong>让当前策略模型自己进入工具环境完成任务，环境根据真实执行结果给 reward，trainer 把这些轨迹变成 advantage，再用 Tinker 更新 LoRA 权重，更新后的 sampler 立刻参与下一轮 rollout</strong>。</p>
+          <div class="callout"><strong>一句话：</strong>Hermes 把 agent 不是当成“单次回答器”训练，而是当成“会调用终端、文件、网页工具的行动策略”训练；每一轮自进化就是：自己行动 → verifier 打分 → 高分轨迹增强、低分轨迹压低 → LoRA 更新 → 新策略继续行动。</div>
+
+          <p>从源码看，这条链路分成三层：Hermes agent loop 负责行动，Hermes/Atropos environment 负责出题和打分，Tinker trainer 负责真正更新权重。</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>启动 RL 工作流。</strong><code class="inline">rl_cli.py</code> 把 Hermes 切到 <code class="inline">tinker-atropos</code> 目录，并启用 <code class="inline">terminal</code>、<code class="inline">web</code>、<code class="inline">rl</code> 工具集，让 agent 能选择环境、改配置、启动训练、查看结果。</div>
+            <div class="flow-step" data-step="2"><strong>RL tool 管训练生命周期。</strong><code class="inline">tools/rl_training_tool.py</code> 扫描环境、写配置、锁定基础设施参数，然后启动三类进程：Atropos API、Tinker trainer、environment server。</div>
+            <div class="flow-step" data-step="3"><strong>环境把模型放进 agent loop。</strong><code class="inline">HermesAgentBaseEnv.collect_trajectory()</code> 给每条 rollout 创建独立 <code class="inline">task_id</code>，装配 system/user messages，然后调用 <code class="inline">HermesAgentLoop.run()</code>。</div>
+            <div class="flow-step" data-step="4"><strong>agent 多轮工具调用。</strong><code class="inline">environments/agent_loop.py</code> 每轮请求模型，如果模型返回 <code class="inline">tool_calls</code>，就用 <code class="inline">model_tools.handle_function_call()</code> 执行，再把 tool result 写回 messages 继续下一轮。</div>
+            <div class="flow-step" data-step="5"><strong>reward 在同一个任务状态里计算。</strong>agent 做完后，环境构造 <code class="inline">ToolContext(task_id)</code>，把同一个 sandbox / terminal / browser 状态交给 <code class="inline">compute_reward()</code> 验证。</div>
+            <div class="flow-step" data-step="6"><strong>Atropos 收集成组轨迹。</strong><code class="inline">collect_trajectories()</code> 会对同一个 item 采 <code class="inline">group_size</code> 条 rollout。每条都有 tokens、masks、logprobs、messages、score。</div>
+            <div class="flow-step" data-step="7"><strong>trainer 计算相对优势。</strong><code class="inline">TinkerAtroposTrainer.pad_data_to_good_offset()</code> 对每组分数算 <code class="inline">advantage = score - group_mean</code>，prompt token advantage 置 0，只训练模型自己生成的 token。</div>
+            <div class="flow-step" data-step="8"><strong>Tinker 做 LoRA 更新。</strong><code class="inline">train_step()</code> 调 <code class="inline">forward_backward_async(..., loss_fn="importance_sampling")</code> 和 <code class="inline">optim_step_async(AdamParams(...))</code>，更新的是 LoRA 训练客户端，不是直接全量改 base model。</div>
+            <div class="flow-step" data-step="9"><strong>新策略立刻回到 rollout。</strong>每一步后 trainer 调 <code class="inline">save_weights_for_sampler(step_i)</code> 和 <code class="inline">create_sampling_client(model_path=new_path)</code>，下一批环境 rollout 用的就是更新后的 sampling client。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <pre><code>Hermes inner self-evolution loop
+
+dataset item
+  -> HermesAgentBaseEnv.format_prompt()
+  -> HermesAgentLoop.run(messages, tools)
+       -> model decides
+       -> tool call executes in sandbox
+       -> tool result returns to messages
+       -> repeat until final answer / max turns
+  -> compute_reward(item, result, ToolContext(task_id))
+  -> Atropos group batch
+  -> advantage = reward - group_mean
+  -> Tinker importance_sampling loss
+  -> LoRA optimizer step
+  -> save sampler weights
+  -> next rollout uses updated sampler</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么叫“内层”</h3>
+              <p>因为它改的是模型策略本身。Hermes skills、memory、workflow 都是在 prompt / 工具 / 文件系统外层增强 agent；而这条 RL 链路会通过 Tinker 把高 reward 行为压进 LoRA 参数里。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么叫“自进化”</h3>
+              <p>因为 rollout 由当前模型自己产生，reward 来自环境验证，更新后的模型又继续产生下一批 rollout。它不是人工写规则教模型每一步怎么做，而是用执行结果筛选自己的行动轨迹。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么是 agentic RL</h3>
+              <p>训练样本不是纯文本问答，而是多轮消息、工具调用、工具结果、终端状态和最终验证构成的完整 trajectory。被优化的是“如何行动”的 token 分布。</p>
+            </article>
+            <article class="mini-card">
+              <h3>源码里的保护边界</h3>
+              <p><code class="inline">rl_training_tool.py</code> 锁定了 tokenizer、rollout/model server、LoRA rank、learning rate、trainer token length 等基础设施参数，避免 agent 随意改训练底座。</p>
+            </article>
+          </div>
+
+          <p>拿 Hermes SWE 环境做一个具体例子最直观。<code class="inline">environments/hermes_swe_env/hermes_swe_env.py</code> 定义了一个软件工程任务环境：模型拿到 coding task，可以用 terminal、file、web 工具改代码；reward 函数在同一个 sandbox 里跑测试。</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>环境出题。</strong>数据集 item 里有 <code class="inline">prompt</code>，可能还有 <code class="inline">test</code>、<code class="inline">test_code</code> 或 <code class="inline">tests</code>。<code class="inline">format_prompt()</code> 把题目和测试说明拼成用户消息。</div>
+            <div class="flow-step" data-step="2"><strong>agent 开始修代码。</strong>system prompt 要求模型像软件工程师一样使用终端、文件工具和 web search，写干净代码并验证。默认最大 30 轮，工具集是 <code class="inline">terminal</code>、<code class="inline">file</code>、<code class="inline">web</code>。</div>
+            <div class="flow-step" data-step="3"><strong>工具状态被保留。</strong>如果模型创建文件、改文件、跑命令，这些状态都绑定到本条 rollout 的 <code class="inline">task_id</code>。后面的 verifier 会拿同一个 <code class="inline">task_id</code> 进入同一个环境。</div>
+            <div class="flow-step" data-step="4"><strong>reward 跑真实测试。</strong><code class="inline">compute_reward()</code> 调 <code class="inline">ctx.terminal('cd /workspace &amp;&amp; python3 -c "..."')</code>。测试 exit code 为 0 给 1.0；如果没通过但创建了新的 Python 文件，给 0.1；否则 0.0。</div>
+            <div class="flow-step" data-step="5"><strong>同题多条 rollout 互相比。</strong>默认 <code class="inline">group_size=4</code>。同一个 bugfix 任务会采四条 agent trajectory：有的先读测试再最小修复，有的乱改，有的忘记跑测试。</div>
+            <div class="flow-step" data-step="6"><strong>训练增强好策略。</strong>通过测试的 trajectory advantage 为正；失败或只拿部分分的 trajectory advantage 为负或较低。Tinker 的 importance-sampling loss 会把成功轨迹里的行动 token 概率推高。</div>
+          </div>
+
+          <pre><code>案例：HumanEval 风格任务
+
+prompt:
+  implement function normalize_phone_number(s)
+tests:
+  assert normalize_phone_number("(650) 555-1212") == "6505551212"
+  assert normalize_phone_number("+1 650 555 1212") == "16505551212"
+
+rollout A:
+  read_file /workspace/solution.py
+  write_file /workspace/solution.py  # 用 regex 只保留数字
+  terminal python3 -m pytest /workspace
+  final: tests pass
+  reward = 1.0
+
+rollout B:
+  write_file /workspace/solution.py  # 只去掉空格，没处理括号和 +
+  terminal python3 -m pytest /workspace
+  final: tests fail
+  reward = 0.1  # 至少创建了 Python 文件
+
+rollout C:
+  只解释思路，没有改文件
+  reward = 0.0
+
+rollout D:
+  改错函数名，测试找不到目标函数
+  reward = 0.1
+
+group_mean = (1.0 + 0.1 + 0.0 + 0.1) / 4 = 0.3
+advantages:
+  A = +0.7
+  B = -0.2
+  C = -0.3
+  D = -0.2</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>A 轨迹学到什么</h3>
+              <p>A 的正 advantage 会增强一串实际有用的决策：先看文件、写最小实现、用终端跑验证、最终回答完成。模型不是只学会 regex，而是学会一套“改代码前后要验证”的行动模式。</p>
+            </article>
+            <article class="mini-card">
+              <h3>B / D 为什么被压低</h3>
+              <p>B 和 D 不是完全没动作，所以有 0.1 partial reward；但它们低于组均值，advantage 仍是负的。训练会降低“没覆盖测试就结束”“改错接口名”这类轨迹 token 的相对概率。</p>
+            </article>
+            <article class="mini-card">
+              <h3>C 为什么最差</h3>
+              <p>C 没有真实改文件，只给解释。对 agentic coding 任务来说，这不是有效行动，所以 reward 0。它会把“只聊天不执行”的模式往下压。</p>
+            </article>
+            <article class="mini-card">
+              <h3>下一轮怎么变强</h3>
+              <p>trainer 保存新的 sampler weights 后，下一批 rollout 用的是更新过的 LoRA。于是模型更容易先检查文件、调用正确工具、跑测试，而不是只输出文字答案。</p>
+            </article>
+          </div>
+
+          <p>这就是 Hermes agentic RL 和普通 SFT/QA RL 的本质差别：奖励不只是答案字符串对不对，而是完整工作流有没有把外部世界改到正确状态。</p>
+          <pre><code>普通问答 RL:
+  prompt -> completion -> answer reward
+
+Hermes agentic RL:
+  prompt -> multi-turn tool actions -> environment state changes
+         -> verifier runs in same task state
+         -> trajectory reward
+         -> token-level advantage update</code></pre>
+
+          <div class="callout">所以“内层自进化”的准确理解是：Hermes 让模型在真实工具环境里反复试任务，用 verifier 奖励筛选自己的行动轨迹，再通过 Tinker-Atropos 把这些结果更新进 LoRA。skills 让 agent 下次“记得经验”，而 inner agentic RL 让模型下次“更自然地采取高 reward 行动”。</div>
+          <div class="refs">参考：<code class="inline">/root/hermes/rl_cli.py</code>、<code class="inline">/root/hermes/tools/rl_training_tool.py</code>、<code class="inline">/root/hermes/environments/agent_loop.py</code>、<code class="inline">/root/hermes/environments/hermes_base_env.py</code>、<code class="inline">/root/hermes/environments/hermes_swe_env/hermes_swe_env.py</code>、<code class="inline">/root/hermes/environments/tool_context.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/trainer.py</code></div>

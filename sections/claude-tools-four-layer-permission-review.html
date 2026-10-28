@@ -1,10 +1,93 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">CT9</div><h2>Claude Code 权限四层详细解读：规则过滤、工具自检、模式兜底、AI 分类器动态审查</h2></div>
+          <p>你记的“四层”方向是对的，但源码里要稍微校正一下：<strong>这四层不是唯一的全部链路</strong>。在它们之前还有 schema / validateInput / PreToolUse hook；在它们之后才是 permission UI / SDK host / coordinator / swarm leader 审批和真正 <code class="inline">tool.call()</code>。</p>
+          <div class="callout"><strong>更准确的一句话：</strong>Claude Code 工具权限核心是：先用规则和工具自检做确定性拦截，再用 permission mode 改变 ask/allow/deny 的默认策略；如果进入 auto mode 或 Bash prompt classifier 场景，再用 AI classifier 对“本次具体动作”做动态审查。</div>
+
+          <h3>先看总入口：工具不是直接执行</h3>
+          <p><code class="inline">src/services/tools/toolExecution.ts</code> 的 <code class="inline">checkPermissionsAndCallTool()</code> 是总闸门。它先做 Zod schema 校验，再调用工具自己的 <code class="inline">validateInput()</code>，然后跑 <code class="inline">runPreToolUseHooks()</code>，最后通过 <code class="inline">resolveHookPermissionDecision()</code> 进入 <code class="inline">canUseTool</code> / <code class="inline">hasPermissionsToUseTool()</code>。只有最终 <code class="inline">permissionDecision.behavior === "allow"</code> 才会调用 <code class="inline">tool.call()</code>。</p>
+          <pre><code>// toolExecution.ts 简化逻辑
+parsedInput = tool.inputSchema.safeParse(input)
+if (!parsedInput.success) return InputValidationError
+
+isValidCall = await tool.validateInput?.(parsedInput.data, context)
+if (isValidCall?.result === false) return tool_use_error
+
+hookPermissionResult = await runPreToolUseHooks(...)
+resolved = await resolveHookPermissionDecision(
+  hookPermissionResult,
+  tool,
+  processedInput,
+  context,
+  canUseTool,
+  assistantMessage,
+  toolUseID,
+)
+
+if (resolved.decision.behavior !== "allow") return permission_denied_result
+return await tool.call(resolved.input, context)</code></pre>
+
+          <h3>四层模型怎么对应源码</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>规则过滤层。</strong><code class="inline">permissions.ts</code> 先查整工具 deny / ask：<code class="inline">getDenyRuleForTool()</code>、<code class="inline">getAskRuleForTool()</code>。Bash 还会在 <code class="inline">bashPermissions.ts</code> 里查 <code class="inline">Bash(command)</code>、<code class="inline">Bash(prefix:*)</code>、wildcard、子命令 deny/ask/allow。</div>
+            <div class="flow-step" data-step="2"><strong>工具自检层。</strong>通用入口调用 <code class="inline">tool.checkPermissions(parsedInput, context)</code>。Bash 会解析 AST、拆 subcommands、检查 command injection、重定向、cd+git、路径约束；Edit/Write 会检查目标路径、敏感目录、symlink resolved path、.claude/.git/shell config 等。</div>
+            <div class="flow-step" data-step="3"><strong>模式兜底层。</strong>工具自检没有 deny/ask 后，通用权限流才处理 <code class="inline">bypassPermissions</code>、整工具 allow rule、<code class="inline">passthrough → ask</code>。外层 <code class="inline">hasPermissionsToUseTool()</code> 再把 <code class="inline">dontAsk</code> 的 ask 转 deny，把 headless / async agent 的 ask 转 PermissionRequest hook 或 auto-deny。</div>
+            <div class="flow-step" data-step="4"><strong>AI 分类器动态审查层。</strong>auto mode 下，如果前面结果是 ask，源码会调用 <code class="inline">classifyYoloAction()</code>，把当前 transcript、工具列表、动作文本一起交给 side query 分类。Bash 还有 prompt-rule classifier：<code class="inline">classifyBashCommand()</code> 可基于用户写的自然语言 allow/ask/deny 规则判断具体命令。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>第一层：规则过滤不是简单 allowlist</h3>
+              <p>规则来源包括 settings、CLI arg、command、session。整工具规则先判断，比如 <code class="inline">Edit</code> deny 会直接拒绝。内容级规则在工具内部处理，比如 <code class="inline">Bash(rm:*)</code>、<code class="inline">Read(/tmp/**)</code>、<code class="inline">Edit(src/**)</code>。</p>
+              <p>关键优先级：<strong>deny 优先于 ask，ask 优先于 allow</strong>。Bash 对 deny/ask 还会更激进地 strip env vars，防止 <code class="inline">FOO=bar rm ...</code> 绕过 deny。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第二层：工具自检懂具体风险</h3>
+              <p>通用规则不知道 <code class="inline">cd evil &amp;&amp; git status</code>、<code class="inline">sed</code>、输出重定向、symlink、Windows NTFS stream、<code class="inline">.claude/settings.json</code> 哪些危险。所以每个工具实现 <code class="inline">checkPermissions()</code>，把业务语义变成 allow / ask / deny。</p>
+              <p>例子：<code class="inline">checkWritePermissionForTool()</code> 会先查 edit deny，再允许内部 plan/scratchpad 路径，再做 <code class="inline">checkPathSafetyForAutoEdit()</code>，然后才考虑 acceptEdits、allow rule、默认 ask。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第三层：模式兜底改变默认行为</h3>
+              <p><code class="inline">bypassPermissions</code> 在源码里不是第一优先级，而是在 deny、工具自检 deny、requiresUserInteraction、content ask rule、safetyCheck 之后才 allow。因此它不是“完全无安全”。</p>
+              <p><code class="inline">acceptEdits</code> 会让工作目录内的文件写入、部分 Bash 文件系统命令更容易自动 allow；<code class="inline">dontAsk</code> 会把 ask 变 deny；headless/async agent 没有弹窗时会先跑 PermissionRequest hook，否则自动 deny。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第四层：AI classifier 是动态审查，不是固定规则</h3>
+              <p>auto mode 下，前面如果得到 ask，Claude Code 不直接弹窗，而是构造 action：<code class="inline">formatActionForClassifier(tool.name, input)</code>，再调 <code class="inline">classifyYoloAction(messages, action, tools, permissionContext)</code>。分类器返回 <code class="inline">shouldBlock</code>、reason、usage、model、duration。</p>
+              <p>如果 block：返回 deny，并记录 denial tracking；如果 allow：返回 allow。classifier 不可用时是否 fail closed 由 <code class="inline">tengu_iron_gate_closed</code> 控制。</p>
+            </article>
+          </div>
+
+          <h3>实际源码优先级：你的四层要这样排</h3>
+          <pre><code>// permissions.ts 简化后的真实顺序
+if (wholeToolDenyRule) return deny              // 规则过滤
+if (wholeToolAskRule && !sandboxAutoAllow) return ask
+
+toolResult = await tool.checkPermissions(...)   // 工具自检
+if (toolResult.behavior === "deny") return deny
+if (tool.requiresUserInteraction?.() && toolResult.behavior === "ask") return ask
+if (contentAskRule || safetyCheck) return ask   // bypass 也绕不过
+
+if (mode === "bypassPermissions") return allow  // 模式兜底
+if (wholeToolAllowRule) return allow
+
+result = toolResult.passthrough ? ask : toolResult
+
+// hasPermissionsToUseTool 外层
+if (result.ask && mode === "dontAsk") return deny
+if (result.ask && mode === "auto") return classifyYoloAction(...) // AI 动态审查
+if (result.ask && shouldAvoidPermissionPrompts) return hook_or_auto_deny
+return result</code></pre>
+
+          <h3>拿两个具体例子串起来</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>例子 A：Edit <code class="inline">.claude/settings.json</code></h3>
+              <p>第一层先看有没有 <code class="inline">Edit</code> 或路径 deny。第二层进入 <code class="inline">checkWritePermissionForTool()</code>，命中 <code class="inline">checkPathSafetyForAutoEdit()</code> 的 Claude config safety check，返回 ask。第三层即使是 <code class="inline">bypassPermissions</code>，safetyCheck 仍在 bypass 前生效。第四层如果 auto mode 且该 safetyCheck 标记 <code class="inline">classifierApprovable</code>，才可能交给 classifier；否则必须人工确认或拒绝。</p>
+            </article>
+            <article class="mini-card">
+              <h3>例子 B：Bash <code class="inline">FOO=1 rm -rf build</code></h3>
+              <p>第一层 Bash 内容规则会用更强 env stripping 检查 deny/ask，所以 <code class="inline">Bash(rm:*)</code> 不会被 <code class="inline">FOO=1</code> 绕过。第二层 Bash 解析 AST / legacy parser，查 operator、subcommand、重定向、路径、command injection。第三层如果没有规则也没有危险，read-only 可 allow，否则 passthrough 变 ask。第四层 auto mode 下才由 classifier 判断这次 rm 是否应该 block。</p>
+            </article>
+          </div>
+
+          <div class="callout"><strong>结论：</strong>你说的四层可以作为讲解框架，但要补一句关键 nuance：<strong>AI 分类器不是所有工具调用的“最后一道必经审查”，它只在 auto mode 或 Bash prompt-rule 场景介入；确定性 deny / safetyCheck / requiresUserInteraction 仍然优先。</strong></div>
+          <div class="refs">参考文件：<code class="inline">src/services/tools/toolExecution.ts</code>、<code class="inline">src/services/tools/toolHooks.ts</code>、<code class="inline">src/utils/permissions/permissions.ts</code>、<code class="inline">src/utils/permissions/PermissionMode.ts</code>、<code class="inline">src/utils/permissions/yoloClassifier.ts</code>、<code class="inline">src/utils/permissions/classifierDecision.ts</code>、<code class="inline">src/tools/BashTool/bashPermissions.ts</code>、<code class="inline">src/tools/BashTool/modeValidation.ts</code>、<code class="inline">src/utils/permissions/filesystem.ts</code>、<code class="inline">src/tools/FileEditTool/FileEditTool.ts</code>、<code class="inline">src/tools/FileWriteTool/FileWriteTool.ts</code>。</div>

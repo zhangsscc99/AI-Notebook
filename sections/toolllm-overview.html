@@ -1,10 +1,112 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">TL1</div><h2>概览解释 ToolLLM 讲的是什么</h2></div>
+          <p><strong>ToolLLM</strong> 这篇论文讲的不是“再发明一个普通聊天大模型”，而是讲：<strong>怎样系统性地让开源 LLM 学会调用真实世界 API，并且能在复杂任务里检索工具、规划工具调用链、执行 API、根据返回结果继续推理，最后给用户答案。</strong></p>
+          <div class="callout"><strong>一句话：</strong>ToolLLM = ToolBench 数据集 + ToolLLaMA 模型训练 + API Retriever 工具检索 + DFSDT 工具调用搜索策略 + ToolEval 自动评测。它的核心目标是补齐开源 LLM 在真实 API 工具使用上的短板。</div>
+
+          <h3>1. 论文要解决的问题是什么</h3>
+          <p>论文认为，当时的开源 LLM，比如 LLaMA / Vicuna / Alpaca，虽然会聊天、写作、回答知识问题，但<strong>不擅长真实工具调用</strong>。主要问题有三类：</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>工具范围太小</h3>
+              <p>很多已有 tool-learning 数据只覆盖少量 toy API 或人工构造 API，离真实世界很远。现实中工具很多，参数复杂，返回结果也不稳定。</p>
+            </article>
+            <article class="mini-card">
+              <h3>多工具任务不够</h3>
+              <p>真实任务经常需要多个 API 串起来用，而不是只调用一个函数。例如先查电影，再查演员，再查礼物或票务信息。</p>
+            </article>
+            <article class="mini-card">
+              <h3>需要工具检索</h3>
+              <p>现实里用户不会手动告诉模型“你只能用这 5 个 API”。系统要能从几万 API 里先找出相关工具，再交给模型调用。</p>
+            </article>
+            <article class="mini-card">
+              <h3>规划容易走错</h3>
+              <p>传统 ReAct 一条路走到底，前面 API 选错、参数错、返回报错，后面就容易陷入错误循环。ToolLLM 用 DFSDT 扩大搜索空间。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>2. ToolBench：先构造真实 API 工具调用数据集</h3>
+          <p>ToolLLM 的数据底座叫 <strong>ToolBench</strong>。论文从 RapidAPI Hub 收集真实 RESTful APIs，最后保留 <strong>3,451 个高质量工具、16,464 个 API、覆盖 49 个类别</strong>。每个 API 不只是名字，还包括描述、HTTP method、required parameters、optional parameters、request body、代码片段、示例返回等文档信息。</p>
+          <pre><code>RapidAPI 真实 API
+  → 过滤不可用 / 低质量 API
+  → 得到 3,451 tools / 16,464 APIs
+  → 用 ChatGPT 生成任务指令
+  → 用真实 API 调用和 DFSDT 标注 solution path
+  → 得到 126,486 条 instruction + solution path 训练样本</code></pre>
+          <p>论文中特别强调 ToolBench 和早期数据集的区别：它有真实 API、真实 API call &amp; response、多工具场景、API retrieval、多步推理。表格里还写到 ToolBench 包含 <strong>469,585 次真实 API 调用</strong>，这比只写函数签名或模拟返回更接近真实工程。</p>
+
+          <h3>3. 指令生成分三类：单工具、多工具同类、多工具集合</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>I1：Single-tool instructions</h3>
+              <p>围绕单个工具或单个 API 生成任务，让模型学会基础调用方式、参数填写和返回结果理解。</p>
+            </article>
+            <article class="mini-card">
+              <h3>I2：Intra-category multi-tool</h3>
+              <p>从同一个 RapidAPI 大类别里抽 2-5 个工具，比如都属于 finance / weather / sports，让 ChatGPT 生成需要组合这些工具的任务。</p>
+            </article>
+            <article class="mini-card">
+              <h3>I3：Intra-collection multi-tool</h3>
+              <p>从同一个 collection 里抽工具。collection 可能跨 category，但共享某种用途或主题，更接近真实的多工具组合需求。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么这样采样</h3>
+              <p>如果完全随机抽 API，工具之间往往毫无关系，很难自然组合成一个用户任务。利用 RapidAPI 的 category / collection 层级，可以提高多工具任务的自然性。</p>
+            </article>
+          </div>
+
+          <h3>4. DFSDT：不是单线 ReAct，而是能回退的工具调用搜索树</h3>
+          <p>ToolLLM 论文的一个关键点是 <strong>Depth-First Search-based Decision Tree，DFSDT</strong>。它解决的是：工具调用不是每次都顺利，API 可能报错，模型可能选错 API 或填错参数。如果只用 ReAct，一步错可能后面全错。</p>
+          <pre><code>普通 ReAct：
+Thought → Action → Observation → Thought → Action → Observation → Final
+问题：基本是一条路径，错了容易一直错下去。
+
+DFSDT：
+把每一步 action 看成树节点。
+如果某条路径报错/无效，可以 Finish by Giving Up 回退，
+再扩展不同 child node，继续深度优先搜索，直到找到可通过的 solution path。</code></pre>
+          <p>在数据标注阶段，ChatGPT 被要求输出 <code class="inline">Thought</code>、<code class="inline">API Name</code>、<code class="inline">Parameters</code>。每个真实 API 调用后的 observation 会进入下一轮推理。系统额外定义两个特殊函数：<strong>Finish with Final Answer</strong> 和 <strong>Finish by Giving Up</strong>，前者用于回答，后者用于放弃当前路径、回退搜索。</p>
+
+          <h3>5. ToolLLaMA：用 ToolBench 微调 LLaMA-2 7B</h3>
+          <p>有了 ToolBench 以后，论文把 LLaMA-2 7B 在 instruction + solution path 上做 supervised fine-tuning，得到 <strong>ToolLLaMA</strong>。由于 API 文档和 API response 很长，论文还用 positional interpolation 把上下文长度从 4096 扩到 <strong>8192</strong>。</p>
+          <p>训练目标不是让模型背 API，而是让模型学会：</p>
+          <ul>
+            <li>读懂 API documentation；</li>
+            <li>根据用户任务选择 API；</li>
+            <li>正确填写 required / optional parameters；</li>
+            <li>看懂真实 API response；</li>
+            <li>多轮调用后综合出 final answer；</li>
+            <li>遇到错误时尝试别的路径或合理放弃。</li>
+          </ul>
+
+          <h3>6. API Retriever：从海量 API 里先找候选工具</h3>
+          <p>现实系统里，不可能把 16k API 全塞进上下文。ToolLLM 因此训练了一个神经 API 检索器。论文用 Sentence-BERT / BERT-base 思路，把用户 instruction 和 API document 编成 embedding，用相似度检索相关 API。</p>
+          <pre><code>用户问题
+  → API Retriever 检索 top-k API 文档
+  → 把候选 API 文档交给 ToolLLaMA
+  → ToolLLaMA 多轮 Thought / API Call / Observation
+  → Final Answer</code></pre>
+          <p>论文实验里，API retriever 在 NDCG@1 / NDCG@5 上明显超过 BM25 和 OpenAI text-embedding-ada-002 baseline。并且实际给 ToolLLaMA top-5 retrieved APIs 时，效果甚至能超过使用原始 ground-truth API 集，因为检索器可能找到更好用的替代 API。</p>
+
+          <h3>7. ToolEval：工具调用不能只看字符串匹配</h3>
+          <p>工具调用任务很难像普通 QA 那样用固定答案评测，因为同一个用户目标可能有多条正确 API 调用路径，RapidAPI 的返回也会随时间变化。所以论文提出 <strong>ToolEval</strong>，用 ChatGPT 做自动评估，主要看两个指标：</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Pass Rate</h3>
+              <p>看模型是否在有限预算内成功完成任务。它衡量的是“能不能执行成功”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Win Rate</h3>
+              <p>给同一个 instruction 和两条 solution paths，让评估器比较哪条更好。它衡量的是“哪条路径质量更高、更有用”。</p>
+            </article>
+          </div>
+          <p>论文报告 ToolEval 和人工评估有较高一致性：pass rate agreement 约 <strong>87.1%</strong>，win rate agreement 约 <strong>80.3%</strong>。</p>
+
+          <h3>8. 最终结果说明了什么</h3>
+          <p>实验结论可以概括成三句话：</p>
+          <ul>
+            <li><strong>普通开源指令模型不等于会工具调用。</strong>Vicuna / Alpaca 在该评测里几乎过不了任务，说明通用 instruction tuning 没覆盖真实 API 使用。</li>
+            <li><strong>ToolLLaMA 能接近 ChatGPT。</strong>用 ToolBench 微调后，ToolLLaMA 在多种单工具、多工具、未见 API 泛化场景中接近 ChatGPT，明显超过 Text-Davinci-003 和 Claude-2 的一些设置。</li>
+            <li><strong>DFSDT 比 ReAct 更适合复杂工具任务。</strong>因为它能探索多条路径、回退错误路径，对复杂多工具任务提升更明显。</li>
+          </ul>
+
+          <div class="callout">最短总结：<strong>ToolLLM 讲的是一个完整的“真实 API 工具调用 LLM”训练和评测框架。</strong>它不是只教模型输出 function call JSON，而是从真实 API 数据集、工具检索、调用链标注、决策树搜索、模型微调、自动评测到最终推理 pipeline 全部打通。</div>
+          <div class="refs">参考论文：<code class="inline">/root/2307.16789v2.pdf</code>，<em>ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs</em>。重点位置：Abstract；Section 1 Introduction；Section 2 Dataset Construction；Section 2.3 Solution Path Annotation；Section 3 Experiments；Section 5 Conclusion。</div>

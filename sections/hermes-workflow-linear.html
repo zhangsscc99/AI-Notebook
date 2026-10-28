@@ -1,10 +1,59 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">HW1</div><h2>怎么思考设计 Hermes 的这个工作流：线性顺序说</h2></div>
+          <p>如果用“怎么设计”来想，Hermes 的工作流不是先想一个大而全的 agent，再往里塞功能；而是按<strong>线性运行链</strong>倒着设计：<strong>用户怎么进来 → 上下文怎么挂上 → 能调用什么 → 模型怎么循环决策 → 长任务怎么拆开 → 结果怎么落盘 → 经验怎么回流</strong>。</p>
+          <div class="callout"><strong>最顺的设计思路：</strong>先把一次 agent run 当成一条流水线，然后逐段问：这一段的输入是什么、状态放哪、失败了怎么恢复、结果给谁看。Hermes 基本就是沿这条顺序长出来的。</div>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先定入口。</strong>用户消息、CLI、gateway、cron、webhook 先统一成一个 agent run 请求，不让每个入口自己偷偷驱动一套逻辑。</div>
+            <div class="flow-step" data-step="2"><strong>再定会话归属。</strong>每个请求先挂到 session / user / platform / workspace 上，这样后面才知道该用哪份历史、哪套权限、哪个工作目录。</div>
+            <div class="flow-step" data-step="3"><strong>再定运行时能力。</strong>根据场景启用对应 toolsets、skills、memory、session search、terminal backend；也就是先决定“这个 agent 这次能干什么”。</div>
+            <div class="flow-step" data-step="4"><strong>再定 prompt 装配。</strong>把 system prompt、ephemeral system prompt、skills prompt、memory、session context、用户输入拼起来，形成这次决策的上下文。</div>
+            <div class="flow-step" data-step="5"><strong>再定核心 loop。</strong>模型先回答；如果出现 <code class="inline">tool_calls</code>，就执行工具，把 tool result 塞回消息，再进下一轮；直到产出最终文本。</div>
+            <div class="flow-step" data-step="6"><strong>再定复杂任务分流。</strong>如果任务太长、太并行、太容易阻塞，就交给 delegate/subagent/background task，而不是把所有复杂度都堆进单个同步 loop。</div>
+            <div class="flow-step" data-step="7"><strong>再定持久化。</strong>会话消息要写到 SQLite 和 session log，避免中断后什么都丢了；这也是后续 session_search、resume、回顾学习的基础。</div>
+            <div class="flow-step" data-step="8"><strong>最后定闭环学习。</strong>一次任务做完后，不只是返回答案，还会把经验回流到 memory、skills、自我回顾里，形成 Hermes 所说的 closed learning loop。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>第 1 段：入口统一</h3>
+              <p>设计上第一件事不是模型，而是<strong>统一请求入口</strong>。Hermes 同时支持 CLI、消息平台、定时任务等，所以要先把这些入口压平成统一 run request；否则后面 session、日志、权限都没法统一。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 2 段：session 先于智能</h3>
+              <p>Hermes 很强调 session 持久化，因为 agent 的“连续性”不只是模型上下文窗口，而是会话归属、历史消息、标题、平台身份、workspace 状态共同决定的。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 3 段：工具和 skills 先挂好</h3>
+              <p>真正进入 loop 之前，先根据本次场景挂上可用工具和 skill。这样模型不是裸奔思考，而是在一个带工具、带 guardrails、带工作套路的运行时里决策。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 4 段：prompt 是装配层</h3>
+              <p>Hermes 的 prompt_builder 做的不是写一段漂亮 system prompt，而是把 memory、session、skills、平台约束、工具能力一起拼装成运行时上下文。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 5 段：核心 loop 要尽量简单</h3>
+              <p>核心循环最好保持朴素：<strong>构建消息 → 调模型 → 执行工具 → 回填结果 → 继续</strong>。Hermes 的复杂性主要放在 loop 外围的能力组织，而不是把 loop 本身写成一团巨型状态机。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 6 段：复杂度外溢到子代理</h3>
+              <p>当一个任务天然可并行、耗时长、或需要隔离上下文时，就交给 delegate_tool / subagent。这样主 loop 仍保持线性，但系统整体又能支持复杂编排。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 7 段：结果必须落盘</h3>
+              <p>Hermes 把 session 写入 SQLite 和 JSON log，不只是为了调试，而是因为没有持久化，就没有 resume、session_search、跨会话学习和审计。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 8 段：把一次任务变成下次能力</h3>
+              <p>这是 Hermes 跟普通 agent 最大的设计差别之一：任务结束后还会思考要不要更新 skill、要不要写 memory、要不要形成下一次可复用的经验。</p>
+            </article>
+          </div>
+          <pre><code>input event
+  -> resolve session / platform / workspace
+  -> enable toolsets + skills + memory
+  -> build runtime prompt/context
+  -> model call
+  -> if tool_calls: run tools and loop
+  -> if task too complex: delegate / background task
+  -> final response
+  -> persist session/logs/state
+  -> memory / skill / review feedback loop</code></pre>
+          <div class="callout">所以线性顺序地说，Hermes 这套工作流的设计思想就是：<strong>先把运行时骨架搭稳，再让模型在这个骨架里循环决策，最后把每次任务沉淀成下次能力。</strong></div>
+          <div class="refs">参考：<code class="inline">/root/hermes/CONTRIBUTING.md</code>（Architecture Overview / Core Loop）、<code class="inline">/root/hermes/run_agent.py</code>、<code class="inline">/root/hermes/agent/prompt_builder.py</code>、<code class="inline">/root/hermes/tools/delegate_tool.py</code>、<code class="inline">/root/hermes/README.md</code></div>

@@ -1,10 +1,20 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">C14</div><h2>简述 Claude Code 完整的任务执行生命周期，按执行顺序拆解每一个环节。</h2></div>
+          <p>完整生命周期分两层：外层 <code class="inline">QueryEngine</code> 接收任务并管理会话；内层 <code class="inline">query.ts</code> 反复跑模型-工具循环直到完成或中断。</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">接收输入：REPL / SDK / print / queued command 把 prompt 交给 submitMessage 或 ask。</div>
+            <div class="flow-step" data-step="2">处理输入：<code class="inline">processUserInput()</code> 解析 slash command、图片、paste、attachment、allowed tools、model override。</div>
+            <div class="flow-step" data-step="3">写入消息与 transcript：用户消息进入 <code class="inline">mutableMessages</code>，并尽早记录，保证可 resume。</div>
+            <div class="flow-step" data-step="4">准备系统环境：加载 system prompt、userContext、systemContext、tools、MCP、agents、skills、plugins、permission context。</div>
+            <div class="flow-step" data-step="5">进入 query：构造 <code class="inline">QueryParams</code>，调用 <code class="inline">query({...})</code>。</div>
+            <div class="flow-step" data-step="6">整理上下文：compact/snip/microcompact/collapse，拼接 system prompt。</div>
+            <div class="flow-step" data-step="7">调用模型：流式产出 assistant text/thinking/tool_use。</div>
+            <div class="flow-step" data-step="8">执行工具：权限检查、工具执行、生成 tool_result。</div>
+            <div class="flow-step" data-step="9">注入运行时上下文：queued command、task notification、memory、skill discovery、edited file attachment。</div>
+            <div class="flow-step" data-step="10">下一轮或收尾：有工具结果就继续；无工具就 stop hooks、budget/recovery 检查后完成。</div>
+            <div class="flow-step" data-step="11">输出结果：QueryEngine 把内部 Message 标准化成 SDKMessage / UI 消息 / result。</div>
+            <div class="flow-step" data-step="12">持久化清理：写 transcript、flush session storage、累计 usage/cost、更新 read file cache。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <pre><code>Prompt -> processUserInput -> mutableMessages/transcript -> system/tools/MCP/agents/skills -> query()
+  -> context prepare -> call model -> tool_use -> run tools -> tool_result/attachments -> loop or terminal
+  -> QueryEngine normalize -> SDK/UI result -> transcript/cache/usage 收尾</code></pre>
+          <div class="refs">参考文件：<code class="inline">src/QueryEngine.ts:209-1178</code>、<code class="inline">src/utils/processUserInput/processUserInput.ts</code>、<code class="inline">src/query.ts</code>、<code class="inline">src/utils/sessionStorage.ts</code>。</div>

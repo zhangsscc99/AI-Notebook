@@ -1,10 +1,22 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">C13</div><h2>Claude Code Agent 的工作流状态机包含哪几种核心状态？状态如何流转？</h2></div>
+          <p>源码里没有一个显式 <code class="inline">WorkflowState</code> enum，但 <code class="inline">query.ts</code> 的 <code class="inline">State</code> 和 <code class="inline">while(true)</code> 就是实际状态机。</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">Input Accepted：用户输入、队列 prompt、task notification 被接收。</div>
+            <div class="flow-step" data-step="2">Context Build：取 compact boundary 后消息，做 snip、microcompact、collapse、autocompact。</div>
+            <div class="flow-step" data-step="3">Model Streaming：调用 <code class="inline">deps.callModel()</code>，收 assistant text/thinking/tool_use。</div>
+            <div class="flow-step" data-step="4">Tool Decision：有 tool_use 就执行工具；没有 tool_use 就进入收尾。</div>
+            <div class="flow-step" data-step="5">Tool Execution：用 <code class="inline">StreamingToolExecutor</code> 或 <code class="inline">runTools()</code> 执行工具。</div>
+            <div class="flow-step" data-step="6">Attachment Injection：注入 queued commands、task notifications、memory、skills、file-change attachments。</div>
+            <div class="flow-step" data-step="7">Continue：把 assistantMessages + toolResults 写回 state，turnCount++，回到 Context Build。</div>
+            <div class="flow-step" data-step="8">Terminal：completed、max_turns、aborted、prompt_too_long、hook_stopped 等终止。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <div class="grid-2">
+            <article class="mini-card"><h3>State 保存什么</h3><p><code class="inline">messages</code>、<code class="inline">toolUseContext</code>、compact tracking、max output token recovery、stop hook 状态、turnCount、pending tool summary、transition reason。</p></article>
+            <article class="mini-card"><h3>状态怎么跳</h3><p>不是 switch enum，而是构造 <code class="inline">next: State</code> 后 <code class="inline">continue</code>；终止时 <code class="inline">return { reason: ... }</code>。</p></article>
+          </div>
+          <pre><code>START -> CONTEXT_PREPARE -> MODEL_STREAMING
+  -> has tool_use ? TOOL_EXECUTION -> ATTACHMENTS -> UPDATE_STATE -> CONTEXT_PREPARE
+  -> no tool_use ? STOP_HOOKS / RECOVERY -> COMPLETED
+
+边界分支：prompt_too_long、max_output_tokens、aborted_streaming、aborted_tools、max_turns、hook_stopped</code></pre>
+          <div class="refs">参考文件：<code class="inline">src/query.ts:204-230</code>、<code class="inline">src/query.ts:241-565</code>、<code class="inline">src/query.ts:650-875</code>、<code class="inline">src/query.ts:1060-1730</code>。</div>

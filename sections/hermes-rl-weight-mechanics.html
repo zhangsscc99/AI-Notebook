@@ -1,10 +1,93 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">H3</div><h2>Hermes agentic RL：权重怎么改、LoRA 加哪、训练后怎么变成模型 API</h2></div>
+          <p>如果把问题收缩到“<strong>模型提升原理</strong>”，Hermes 这套 agentic RL 的关键不是 skill 文本，而是：<strong>在固定底座模型上创建一个 LoRA 训练客户端，让 rollout 的 reward 信号通过 importance sampling loss 回流到 LoRA 参数，再把新权重立刻切到采样端</strong>。</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">先确定底座模型 <code class="inline">base_model</code> 和 LoRA rank <code class="inline">lora_rank</code>。</div>
+            <div class="flow-step" data-step="2">通过 Tinker SDK 的 <code class="inline">ServiceClient.create_lora_training_client_async(base_model=..., rank=...)</code> 创建 LoRA 训练客户端。</div>
+            <div class="flow-step" data-step="3">environment 生成 rollout，score 出 reward，Atropos API 聚合成 batch。</div>
+            <div class="flow-step" data-step="4">trainer 用 <code class="inline">forward_backward_async(..., loss_fn=&quot;importance_sampling&quot;)</code> 和 <code class="inline">optim_step_async(...)</code> 更新 LoRA 参数。</div>
+            <div class="flow-step" data-step="5">训练后通过 <code class="inline">save_weights_for_sampler(...)</code> 导出一个新的 sampler 权重路径，再用 <code class="inline">create_sampling_client(model_path=...)</code> 切到新模型。</div>
+            <div class="flow-step" data-step="6">最后用本地 FastAPI 包一层，暴露成 <code class="inline">/v1/chat/completions</code>、<code class="inline">/v1/completions</code>、<code class="inline">/generate</code> 这样的训练后模型 API。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>1. 模型权重到底怎么被修改</h3>
+              <p>在这套实现里，<strong>不是直接全量更新 base model</strong>，而是走 LoRA 训练路径。trainer 初始化时会调用：</p>
+              <pre><code>self.training_client = await self.service_client.create_lora_training_client_async(
+    base_model=self.base_model,
+    rank=self.lora_rank,
+)</code></pre>
+              <p>这说明真实被优化的是 <strong>LoRA adapter 权重</strong>，不是整个底座模型全参。后续每个 step 的更新来自：</p>
+              <pre><code>await self.training_client.forward_backward_async(data, loss_fn="importance_sampling")
+await self.training_client.optim_step_async(adam_params)</code></pre>
+              <p>也就是说：rollout 先形成训练 datum，loss 回传到 LoRA 参数，再做优化器 step。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>2. LoRA 层加在哪里</h3>
+              <p><strong>当前 Hermes / tinker-atropos 这份代码并没有显式展开“LoRA 插到哪几个 projection 层”</strong>。它只暴露了两个关键输入：</p>
+              <ul>
+                <li><code class="inline">base_model</code></li>
+                <li><code class="inline">lora_rank</code></li>
+              </ul>
+              <p>真正把 LoRA adapter 注入到底座模型哪些模块，是由 <strong>Tinker 的 LoRA training client</strong> 在其内部完成的；这部分在当前仓库里是 SDK / 服务端黑箱，没有像常见 PEFT 配置那样把 <code class="inline">q_proj / v_proj / o_proj</code> 明文列出来。</p>
+              <div class="callout">所以准确说法是：<strong>Hermes 代码能看到“用了 LoRA + rank 多少”，但看不到“LoRA 精确插在哪些层”</strong>；层级注入细节被 Tinker API 抽象掉了。</div>
+            </article>
+
+            <article class="mini-card">
+              <h3>3. 调用什么 API 做 RL</h3>
+              <p>这里其实有两套 API 在配合：</p>
+              <ul>
+                <li><strong>Atropos 本地 API：</strong>trainer 会先向 <code class="inline">{atropos_api_url}/register</code> 注册，再从 <code class="inline">{atropos_api_url}/batch</code> 拉 rollout batch。</li>
+                <li><strong>Tinker SDK API：</strong><code class="inline">create_lora_training_client_async</code>、<code class="inline">forward_backward_async</code>、<code class="inline">optim_step_async</code>、<code class="inline">save_weights_for_sampler</code>、<code class="inline">create_sampling_client</code>。</li>
+              </ul>
+              <p>所以 RL 不是直接打一条“train()”完事，而是 <strong>Atropos 负责环境/rollout，Tinker 负责参数优化和采样客户端</strong>。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>4. 模型提升原理是什么</h3>
+              <p>提升的核心机制是：对同一问题采多条 rollout，依据 reward 算出组内相对优势：</p>
+              <pre><code>advantage = score - group_mean</code></pre>
+              <p>然后只对生成段做训练，把参考 logprob、target token、advantage 一起塞进 datum，交给 Tinker 的 <code class="inline">importance_sampling</code> loss。于是模型不是只学“答案对不对”，而是在学：<strong>什么样的生成轨迹更值得被提高概率</strong>。</p>
+              <div class="callout">这就是 agentic RL 相比 skill 更深的一点：它在改 policy 本身，而不是只在 runtime 外面加操作说明书。</div>
+            </article>
+
+            <article class="mini-card">
+              <h3>5. 训练后怎么“部署”成可调用模型</h3>
+              <p>这份实现里，训练过程中每一步更新后都会：</p>
+              <pre><code>new_path = self.training_client.save_weights_for_sampler(name=f"step_{step+1}").result().path
+self.current_sampling_client = self.service_client.create_sampling_client(model_path=new_path)</code></pre>
+              <p>也就是先得到一个新的 <code class="inline">model_path</code>（本质上是 Tinker 里的 sampler 权重路径），再创建新的 sampling client。训练结束时还会打印：</p>
+              <pre><code>tinker://&lt;training_run_id&gt;/sampler_weights/final</code></pre>
+              <p>这个路径就是训练后模型权重的句柄。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>6. 训练好后怎么封装成模型 API</h3>
+              <p>仓库里不是单独写一个“云上部署服务”，而是直接在 trainer 进程里起一个本地 FastAPI 包装层：</p>
+              <ul>
+                <li><code class="inline">/v1/completions</code></li>
+                <li><code class="inline">/v1/chat/completions</code></li>
+                <li><code class="inline">/generate</code></li>
+              </ul>
+              <p>这些 endpoint 内部都会调用：</p>
+              <pre><code>trainer.current_sampling_client.sample_async(...)</code></pre>
+              <p>因此训练后的模型 API 封装方式就是：<strong>把最新的 sampling client 挂到一个 OpenAI-compatible / SGLang-compatible 的本地推理壳上</strong>。</p>
+            </article>
+          </div>
+
+          <pre><code>base_model + lora_rank
+  -> create_lora_training_client_async(...)
+  -> rollout batch from Atropos
+  -> forward_backward_async(loss_fn="importance_sampling")
+  -> optim_step_async(...)
+  -> save_weights_for_sampler(...)
+  -> create_sampling_client(model_path=new_path)
+  -> FastAPI wrapper
+      -> /v1/completions
+      -> /v1/chat/completions
+      -> /generate</code></pre>
+
+          <p>如果要把训练后的权重单独导出来，仓库还提供了下载脚本：它通过 <code class="inline">create_rest_client()</code> 和 <code class="inline">get_checkpoint_archive_url_from_tinker_path(...)</code>，把 <code class="inline">tinker://.../sampler_weights/final</code> 下载成归档文件。</p>
+          <div class="callout">最准确的总结是：<strong>Hermes 的 agentic RL 不是自己手写 LoRA 注入和底层训练核，而是通过 Tinker 的 LoRA training client 来改 adapter 权重；再把更新后的 sampler client 用 FastAPI 封装成一个训练后模型 API。</strong></div>
+          <div class="refs">参考：<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/trainer.py</code>、<code class="inline">/root/hermes/tinker-atropos/launch_training.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/config.py</code>、<code class="inline">/root/hermes/tinker-atropos/tinker_atropos/utils/download_weights.py</code>、<code class="inline">/root/hermes/tools/rl_training_tool.py</code></div>

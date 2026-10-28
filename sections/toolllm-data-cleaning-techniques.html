@@ -1,10 +1,91 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">TL2</div><h2>论文主要的数据清洗技巧和技术是什么</h2></div>
+          <p>ToolLLM 的“洗数据”不是传统 NLP 里只做去重、去脏词、去乱码。它的数据清洗核心是围绕<strong>真实 API 是否可用、API 返回是否适合进上下文、生成的 instruction 是否真的对应 API、solution path 是否真的能完成任务</strong>来做筛选。</p>
+          <div class="callout"><strong>一句话：</strong>ToolLLM 的数据清洗主线是：先过滤不可用 API，再压缩冗长 API response，再过滤 ChatGPT 生成 instruction 里的幻觉 API，最后只保留 DFSDT 找到并通过评估的 solution path。它清洗的是“工具调用链是否真实可执行”。</div>
+
+          <h3>1. 第一层：RapidAPI 工具池过滤——先保证 API 真的能用</h3>
+          <p>论文最早从 RapidAPI 抓到了 <strong>10,853 个 tools / 53,190 个 APIs</strong>，但真实 API 市场质量参差不齐：有的 API 失效，有的返回 404，有的响应很慢，有的返回 HTML 源码或错误信息。ToolLLM 没有直接全量使用，而是做了严格过滤，最后只保留 <strong>3,451 个 tools / 16,464 个 APIs</strong>。</p>
+          <pre><code>原始 RapidAPI 抓取：10,853 tools / 53,190 APIs
+  → 基础功能测试：API 是否能正常调用
+  → 示例调用：拿 example response
+  → 响应时间过滤：长期很慢的 API 丢弃
+  → 返回质量过滤：HTML 源码、错误消息、低质量 response 丢弃
+  → 最终保留：3,451 tools / 16,464 APIs</code></pre>
+          <p>这是最关键的一步。因为训练工具调用模型时，如果 API 本身不可用，模型学到的不是“怎么调用工具”，而是大量噪声、错误和不可复现的失败路径。</p>
+
+          <h3>2. 第二层：API response compression——把长返回压短，防止污染上下文</h3>
+          <p>真实 API response 经常很长，而且包含大量无关字段。如果完整塞进 LLM 上下文，会挤占 token，甚至干扰后续推理。论文在 Appendix A.2 里专门做了 <strong>API Response Compression</strong>。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>怎么压缩</h3>
+              <p>因为每个 API 的 response format 基本固定，论文让 ChatGPT 看该 API 的 tool documentation、参数、example response，再结合 3 个专家写的 in-context examples，判断哪些 key 是重要字段、哪些 key 可以删。</p>
+            </article>
+            <article class="mini-card">
+              <h3>压缩规则</h3>
+              <p>推理时，如果 API response 超过 <code class="inline">1024 tokens</code>，就按该 API 的压缩策略删除不重要信息；如果压缩后仍超过 1024 tokens，就只保留前 1024 tokens。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>这个技巧很实用：它不是粗暴截断所有返回，而是先让 LLM 为每个 API 学一个“保留关键字段、删除噪声字段”的 schema 级压缩策略。</p>
+
+          <h3>3. 第三层：过滤 instruction 里的 hallucinated relevant APIs</h3>
+          <p>ToolBench 的 instruction 是 ChatGPT 根据采样 API 文档生成的。ChatGPT 可能会幻觉：生成了一个任务，同时声称某个 API 是 relevant，但这个 API 并不在本次采样集合 <code class="inline">Ssub_N</code> 里，甚至可能不存在。</p>
+          <p>论文的做法很直接：生成初始 instruction 后，检查它标注的 relevant APIs 是否确实存在于采样 API 集合里；如果相关 API 是 hallucinated，就过滤掉。</p>
+          <pre><code>ChatGPT 输出：instruction + relevant APIs
+检查：relevant APIs ⊂ Ssub_N ?
+  是：保留为 qualified instruction/API pair
+  否：过滤，因为它引用了幻觉 API</code></pre>
+          <p>这一步保证训练 API retriever 的正样本是可信的。否则 retriever 会被训练成把问题匹配到不存在或不相关的 API。</p>
+
+          <h3>4. 第四层：利用 RapidAPI 层级采样，避免随机组合造成脏多工具任务</h3>
+          <p>多工具任务最容易造脏数据。如果完全随机抽几个 API，可能一个查天气、一个查股票、一个查星座，硬让 ChatGPT 编一个任务，得到的 instruction 会很牵强。</p>
+          <p>论文用了 RapidAPI 的 <strong>category</strong> 和 <strong>collection</strong> 层级来采样：</p>
+          <ul>
+            <li><strong>I1：</strong>单工具任务，遍历每个 tool 生成。</li>
+            <li><strong>I2：</strong>同一个 category 里抽 2-5 个 tools，每个 tool 最多抽 3 个 APIs。</li>
+            <li><strong>I3：</strong>同一个 collection 里抽 tools，构造跨工具但目标相关的任务。</li>
+          </ul>
+          <p>这其实也是一种数据清洗/数据构造技巧：不是生成后再全靠过滤，而是在采样阶段就减少不相关工具组合，从源头降低脏 instruction 的比例。</p>
+
+          <h3>5. 第五层：solution path 只保留 passed 路径</h3>
+          <p>ToolLLM 不只是要 instruction，还要模型真实调用 API 后形成的 solution path。论文用 DFSDT 搜索多条工具调用路径，但最终<strong>只保留 passed solution paths</strong> 作为训练数据。</p>
+          <pre><code>instruction
+  → ChatGPT + available APIs
+  → DFSDT 搜索调用路径
+  → 执行真实 API，拿 observation
+  → 如果路径能完成任务：保留
+  → 如果路径失败 / 一直报错 / 不能完成：丢弃</code></pre>
+          <p>这比普通 ReAct 轨迹更干净。因为 ReAct 可能一条路走错到底；DFSDT 可以回退、换节点、探索新路径。最终保留的是通过搜索找到的有效调用链，训练信号质量更高。</p>
+
+          <h3>6. 第六层：ToolEval 多次评估 + majority vote，减少评估噪声</h3>
+          <p>Appendix A.5 里，ToolEval 对 pass rate / win rate 都不是只问 ChatGPT 一次，而是让 evaluator 生成多次预测，通常 <strong>≥ 4 次</strong>，然后 majority vote 得到最终判断。</p>
+          <p>这也是一种清洗思想：工具任务没有唯一标准答案，API 返回还可能随时间变化，单次 LLM 判断有随机性。多次评估取多数，可以降低误判。</p>
+
+          <h3>7. 最值得借鉴的技术点</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>可执行性优先</h3>
+              <p>不是看文本是否漂亮，而是看 API 是否真的能调用、路径是否真的能执行、返回是否真的有用。</p>
+            </article>
+            <article class="mini-card">
+              <h3>源头采样约束</h3>
+              <p>用 category / collection 约束多工具组合，避免随机拼工具导致任务天然不合理。</p>
+            </article>
+            <article class="mini-card">
+              <h3>结构化字段校验</h3>
+              <p>检查 relevant APIs 是否属于采样集合，过滤 ChatGPT 幻觉出来的 API 名称。</p>
+            </article>
+            <article class="mini-card">
+              <h3>长上下文压缩</h3>
+              <p>对 API response 做 schema-aware compression，减少无关字段进入训练和推理上下文。</p>
+            </article>
+            <article class="mini-card">
+              <h3>搜索式轨迹清洗</h3>
+              <p>用 DFSDT 多路径搜索，失败路径可以回退，最后只保留 passed solution path。</p>
+            </article>
+            <article class="mini-card">
+              <h3>多数投票评估</h3>
+              <p>ToolEval 多次判断后 majority vote，降低 LLM evaluator 的随机性。</p>
+            </article>
+          </div>
+
+          <div class="callout">如果你要复用 ToolLLM 的数据清洗方法，最核心不是“去重”，而是这套标准：<strong>工具真实可用、任务引用的工具真实存在、API 返回足够短且保留关键信息、调用轨迹真实执行过并能完成任务。</strong></div>
+          <div class="refs">参考论文：<code class="inline">/root/2307.16789v2.pdf</code>。重点位置：Section 2.1 API Filtering；Section 2.2 Instruction Generation；Section 2.3 Solution Path Annotation；Appendix A.1 Details for Filtering RapidAPI；Appendix A.2 API Response Compression；Appendix A.5 Details for ToolEval。</div>

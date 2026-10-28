@@ -1,10 +1,17 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">DSH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
+
+          <p>DeepSeek Harness（命令行入口 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 Agent Harness。它不是聊天模型，而是组织模型、工具、会话、权限、工作区、插件和 agent loop 的运行环境。</p>
+
+          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 解决的是“如何让模型可靠地完成多轮真实任务”：模型负责判断下一步，Harness 负责工具执行、状态持久化、权限边界、错误恢复和可扩展性。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card"><h3>让模型真正行动</h3><p>通过工具与执行流水线，模型可以读取工作区、运行命令、使用终端、委托 subagent，并把观察结果继续送回 agent loop。</p></article>
+            <article class="mini-card"><h3>把任务变成可恢复状态</h3><p>Session 使用追加式事件日志表达用户消息、模型请求、流式响应、工具调用和结果。模型历史从日志投影出来，而不是依赖一段不可审计的数组。</p></article>
+            <article class="mini-card"><h3>一切皆插件</h3><p>模型适配器、工具注册表、会话日志、agent loop 都是可替换插件。扩展方式是在共享 context 上挂载新能力，而不是修改一个隐藏的特权核心。</p></article>
+            <article class="mini-card"><h3>面向真实运行环境</h3><p>包含 Web、headless、SDK、ACP 等 profile，以及沙箱、审批、凭据、遥测和文件系统能力 seam。</p></article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>它和普通聊天客户端的区别</h3>
+          <p>普通客户端的核心对象是“消息”；Harness 的核心对象是“可执行任务”。一次 turn 可以包含多个 step，每个 step 都是一次模型请求及其工具调用。Harness 必须在每一步之间保存状态、执行策略、恢复失败，并把真实结果重新交给模型。</p>
+
+          <div class="refs">事实来源：<a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">deepseek-ai/deepseek-harness</a>，README 与 <code class="inline">docs/architecture.zh.md</code>，MIT License。当前为 Developer Preview，接口可能发生破坏性变化。</div>

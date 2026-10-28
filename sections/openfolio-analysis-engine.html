@@ -1,10 +1,96 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header">
+            <span class="index">01</span>
+            <h2>我们的分析引擎是什么，分析了哪些方面，分别用了什么信息和 API</h2>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>这里的“我们的分析引擎”指 Openfolio / Portfolio Manager 里的投资组合 AI 分析链路。它不是一个单独的量化回测引擎，而是一个<strong>后端数据聚合 + 规则指标计算 + 大模型报告生成 + 历史报告保存 + AI Assistant 记忆更新</strong>的组合式分析引擎。</p>
+
+          <div class="callout"><strong>一句话：</strong>Openfolio 的分析引擎先从数据库和行情 API 拿到实时持仓、价格、盈亏、资产分布，再把这些结构化数据塞进专业投资分析 prompt，调用阿里云 DashScope 兼容 OpenAI 的 Chat Completions 接口生成报告；如果 AI 网络失败，则回退到本地 offline analysis。</div>
+
+          <h3>1. 入口是什么</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>报告生成接口。</strong><code class="inline">POST /api/ai-analysis/portfolio</code>，代码在 <code class="inline">backend/routes/ai-analysis.js</code>。它先调用 <code class="inline">assetService.getPortfolioAssets(portfolioId)</code>，拿到和 Dashboard 同源的资产数据。</div>
+            <div class="flow-step" data-step="2"><strong>AI 分析服务。</strong>实际使用 <code class="inline">backend/services/aiAnalysisService-improved.js</code>，负责生成 prompt、调用大模型、解析报告、提取 summary。</div>
+            <div class="flow-step" data-step="3"><strong>历史保存和助手记忆。</strong>报告生成后会通过 <code class="inline">aiAnalysisHistoryService.saveAnalysisReport()</code> 保存到数据库，并通过 <code class="inline">aiIntegrationService.storeAnalysisResult()</code> 更新 AI Assistant 的上下文。</div>
+            <div class="flow-step" data-step="4"><strong>聊天助手接口。</strong><code class="inline">POST /api/ai-analysis/chat</code> 每次对话前会调用 <code class="inline">buildRealtimePortfolioContext()</code> 重新读取实时 portfolio 数据，避免 AI 只凭旧上下文回答。</div>
+          </div>
+
+          <h3>2. 用的 AI 引擎是什么</h3>
+          <p>大模型层用的是阿里云 DashScope 的 OpenAI-compatible API。后端从环境变量读取：</p>
+          <pre><code>DASHSCOPE_API_KEY 或 AI_ALIYUN_API_KEY
+AI_ALIYUN_BASE_URL 默认 https://dashscope.aliyuncs.com/compatible-mode/v1/
+AI_ALIYUN_MODEL 默认 qwen-turbo-latest
+endpoint = baseUrl + "chat/completions"</code></pre>
+          <p>请求格式是标准 chat completions：<code class="inline">model</code>、<code class="inline">messages</code>、<code class="inline">temperature: 0.7</code>、<code class="inline">top_p: 0.9</code>、<code class="inline">max_tokens: 3000</code>。失败时会重试 3 次；网络错误、超时或连接失败后会进入 offline analysis，不让页面直接崩掉。</p>
+
+          <h3>3. 分析了哪些方面</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>资产配置分析</h3>
+              <p>看各资产类型的金额、占比、数量，判断股票、ETF、crypto、cash、bond、commodity 是否过度集中或配置不足。数据来自 <code class="inline">assetsByType</code>、<code class="inline">totalValue</code>、每类 <code class="inline">totalValue/count</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>风险评估</h3>
+              <p>分析市场风险、行业风险、个股风险、集中度风险、波动风险。summary 里的备用风险等级用股票和 crypto 占比估算：风险资产占比越高，风险等级越高。</p>
+            </article>
+            <article class="mini-card">
+              <h3>表现分析</h3>
+              <p>看每个持仓的当前价格、平均成本、当前市值、总盈亏、收益率，识别表现好和表现差的资产。字段包括 <code class="inline">quantity</code>、<code class="inline">avg_cost</code>、<code class="inline">current_price</code>、<code class="inline">gainLoss</code>、<code class="inline">gainLossPercent</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>市场展望和个股分析</h3>
+              <p>prompt 要求 AI 对每只股票分析财务表现、业务基本面、竞争地位、新闻发展、行业前景、管理层、估值、技术动量、公司特定风险、短长期展望。这里主要依赖模型自身知识和输入的持仓/价格数据，不是后端逐项抓新闻。</p>
+            </article>
+            <article class="mini-card">
+              <h3>优化建议</h3>
+              <p>要求输出买、卖、再平衡、仓位大小、风险管理建议，并考虑税务影响。后端会从 AI 文本里的 Optimization / Recommendations 章节提取最多 5 条建议作为 summary。</p>
+            </article>
+            <article class="mini-card">
+              <h3>投资策略和评分</h3>
+              <p>要求给 3-6 个月短期、1-3 年长期策略、再平衡频率、关键监控指标，并强制输出 <code class="inline">OVERALL PORTFOLIO SCORE: XX/100</code>。如果 AI 没给分，后端用分散度和最大单类占比做备用评分。</p>
+            </article>
+          </div>
+
+          <h3>4. 分别用了什么信息</h3>
+          <p>核心输入来自 MySQL 的 <code class="inline">assets</code> 和 <code class="inline">portfolios</code> 表，再由后端服务加工成分析需要的结构：</p>
+          <ul>
+            <li><strong>组合级信息：</strong>portfolioId、totalValue、totalAssets、现金、资产类型分布。</li>
+            <li><strong>持仓级信息：</strong>symbol、name、asset_type、quantity、avg_cost、current_price、currency、portfolio_id。</li>
+            <li><strong>计算字段：</strong>currentValue、gainLoss、gainLossPercent、dailyChange、changePercent、每类资产 totalValue / totalGainLoss / count。</li>
+            <li><strong>报告历史：</strong>AI 报告保存到历史服务，后续可以按 reportId 读取旧报告，避免每次都重新生成。</li>
+            <li><strong>AI Assistant 上下文：</strong>最新分析结果会缓存并注入聊天助手；聊天时还会实时读取 portfolio，减少“AI 不知道我当前持仓”的问题。</li>
+          </ul>
+
+          <h3>5. 用了哪些外部 API</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>阿里云 DashScope / Qwen</h3>
+              <p>用途：生成投资组合分析报告和 AI chat 回复。接口：<code class="inline">/compatible-mode/v1/chat/completions</code>。默认模型：<code class="inline">qwen-turbo-latest</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Nasdaq API</h3>
+              <p>用途：美股/ETF quote、market movers、部分行情列表。服务文件：<code class="inline">backend/services/nasdaqService.js</code>，基础地址 <code class="inline">https://api.nasdaq.com/api</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Stooq 免费行情</h3>
+              <p>用途：当 Yahoo/Nasdaq 在服务器环境不可用时，作为股票历史和 quote 兜底。服务文件：<code class="inline">backend/services/yahooFinance.js</code> 里的 Stooq fallback。</p>
+            </article>
+            <article class="mini-card">
+              <h3>腾讯港股行情</h3>
+              <p>用途：港股数字代码兜底，例如 <code class="inline">3690</code> 转成 <code class="inline">hk03690</code> 获取价格和涨跌。服务文件：<code class="inline">getHongKongStockPriceFromTencent()</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>CoinGecko</h3>
+              <p>用途：crypto 价格、24h change、volume、market cap。接口：<code class="inline">https://api.coingecko.com/api/v3/simple/price</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Alpha Vantage</h3>
+              <p>用途：市场涨跌榜、活跃交易榜。接口：<code class="inline">https://www.alphavantage.co/query?function=TOP_GAINERS_LOSERS</code>，key 来自 <code class="inline">ALPHA_VANTAGE_API_KEY</code> 或 demo。</p>
+            </article>
+          </div>
+
+          <h3>6. 哪些不是它现在真正做的</h3>
+          <p>当前分析引擎不是完整的机构级风控/回测系统。它没有真正做多因子模型、历史回测、VaR 实盘级计算、逐新闻源抓取、财报实时解析或真实税务模拟。页面上的 AI 报告主要是：<strong>用实时组合数据和行情数据作为输入，让 Qwen 生成专业解释和建议，再用简单规则提取 summary。</strong></p>
+
+          <div class="callout"><strong>结论：</strong>Openfolio 的分析引擎是“数据聚合 + AI 报告”的产品型分析引擎。可靠的部分是持仓、价格、盈亏、资产分布这些结构化输入；需要谨慎看的部分是市场展望、个股基本面和新闻判断，因为这部分主要来自大模型生成，而不是后端单独接了实时新闻/财报 API。</div>
+          <div class="refs">参考项目：<code class="inline">/root/Portfolio-Manager</code>。关键文件：<code class="inline">backend/routes/ai-analysis.js</code>、<code class="inline">backend/services/aiAnalysisService-improved.js</code>、<code class="inline">backend/services/assetService.js</code>、<code class="inline">backend/services/portfolioService.js</code>、<code class="inline">backend/services/yahooFinance.js</code>、<code class="inline">backend/services/nasdaqService.js</code>、<code class="inline">backend/services/cryptoService.js</code>、<code class="inline">backend/services/alphaVantageService.js</code>、<code class="inline">backend/services/aiIntegrationService.js</code>、<code class="inline">backend/services/aiAnalysisHistoryService.js</code>。</div>

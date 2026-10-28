@@ -1,10 +1,54 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">G2</div><h2>OpenClaw 的通信方式</h2></div>
+          <p>OpenClaw 的通信不是一条简单 HTTP 请求。源码里可以分成四层：<strong>SDK / CLI 到 Gateway 的 RPC 通信、Gateway 事件流、Channel 插件到 agent turn 的路由、最终回复的 durable delivery</strong>。</p>
+          <div class="callout"><strong>一句话：</strong>Gateway 是控制面和协议路由器；Channel 是外部平台适配器；EventHub 是异步事件总线；sessionKey / agentId 是把消息送回正确会话的地址。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. SDK ↔ Gateway：WebSocket RPC</h3>
+              <p><code class="inline">packages/sdk/src/transport.ts</code> 里的 <code class="inline">GatewayClientTransport</code> 会包装 <code class="inline">src/gateway/client.ts</code>。客户端调用 <code class="inline">request(method, params)</code>，底层通过 WebSocket 发请求帧。</p>
+              <p>常见 method 包括 <code class="inline">agent</code>、<code class="inline">agent.wait</code>、<code class="inline">sessions.create</code>、<code class="inline">sessions.send</code>、<code class="inline">sessions.abort</code>、<code class="inline">tasks.list/get/cancel</code>、<code class="inline">tools.catalog/effective/invoke</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. Gateway → SDK：事件流</h3>
+              <p><code class="inline">packages/sdk/src/event-hub.ts</code> 提供 <code class="inline">EventHub.publish()</code> 和 <code class="inline">EventHub.stream(filter, { replay: true })</code>。Gateway 收到 agent 运行中的状态变化后，会以事件形式推给客户端。</p>
+              <p>事件类型包括 <code class="inline">agent.started</code>、<code class="inline">assistant.message</code>、<code class="inline">agent.completed</code>、<code class="inline">session.created/updated/compacted</code>、<code class="inline">task.updated</code> 等。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. Channels：把外部消息变成 agent turn</h3>
+              <p>Telegram、iMessage、Slack、Discord 等入口不是直接调用模型，而是通过 channel 插件把外部平台消息标准化，然后交给 <code class="inline">src/channels/turn/kernel.ts</code> 创建一次 reply pipeline。</p>
+              <p>channel routing 会根据平台、账号、peer、thread 等信息映射到 <code class="inline">agentId</code> 和 <code class="inline">sessionKey</code>，确保同一个群、私聊或 thread 能持续进入同一条会话线。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. Outbound：结果怎么发回去</h3>
+              <p><code class="inline">src/channels/message/send.ts</code>、<code class="inline">reply-pipeline.ts</code>、<code class="inline">durable-delivery.ts</code> 负责最终回复、流式 preview、工具进度 preview 和失败重试。</p>
+              <p><code class="inline">lastRoute</code> 记录“这条 session 的回复应该回到哪里”。这让 agent 运行完成后，不需要重新猜应该发到哪个 Telegram chat 或哪个 iMessage thread。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>典型链路可以这样讲：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">用户在 Telegram / CLI / Web UI 发消息。</div>
+            <div class="flow-step" data-step="2">入口层把消息转换成 Gateway request 或 channel inbound event。</div>
+            <div class="flow-step" data-step="3">Gateway / channel routing 解析 <code class="inline">agentId</code>、<code class="inline">sessionKey</code>、附件、幂等 key、权限上下文。</div>
+            <div class="flow-step" data-step="4">OpenClaw agent runtime 执行模型推理、工具调用、memory search、artifact 生成。</div>
+            <div class="flow-step" data-step="5">运行状态通过 EventHub / Gateway stream 发给客户端；最终回复进入 reply pipeline。</div>
+            <div class="flow-step" data-step="6">durable delivery 根据 lastRoute 把消息发回原平台，失败时可以重试或记录状态。</div>
+          </div>
+
+          <pre><code>CLI / SDK
+  → GatewayClientTransport.request("agent", params)
+  → Gateway WebSocket method dispatch
+  → agent runtime
+  → EventHub: agent.started / assistant.message / agent.completed
+  → SDK stream receives events
+
+Telegram / iMessage
+  → channel plugin inbound
+  → channel turn kernel
+  → session routing: agentId + sessionKey
+  → agent runtime
+  → reply pipeline / durable delivery
+  → original chat/thread</code></pre>
+
+          <div class="callout">记忆方式：<strong>RPC 负责“发命令”，Event 负责“看过程”，Channel 负责“接外部平台”，sessionKey 负责“找到会话”，lastRoute 负责“把结果送回去”。</strong></div>
+          <div class="refs">参考：<code class="inline">packages/sdk/src/client.ts</code>、<code class="inline">packages/sdk/src/transport.ts</code>、<code class="inline">packages/sdk/src/event-hub.ts</code>、<code class="inline">packages/sdk/src/types.ts</code>、<code class="inline">src/gateway/client.ts</code>、<code class="inline">src/gateway/server*</code>、<code class="inline">src/channels/turn/kernel.ts</code>、<code class="inline">src/channels/message/send.ts</code>、<code class="inline">docs/channels/channel-routing.md</code>。</div>

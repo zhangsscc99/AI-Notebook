@@ -1,10 +1,35 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">VRAG7</div><h2>VRAG 可以文搜图、图搜文、图搜图吗</h2></div>
+          <p>要分清<strong>模型能力</strong>和<strong>当前 API 实现</strong>。VRAG 使用的多模态 embedding 模型理论上可以把文本、图片、视频放进同一向量空间；但当前 <code class="inline">SearchEngine.search()</code> 暴露出来的查询入口主要是<strong>文本 query</strong>。</p>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>文搜图：支持</h3>
+              <p>这是当前 demo 的主路径。用户问题或模型生成的搜索词是文本，<code class="inline">search()</code> 把文本 query 编成向量；如果 corpus 里是图片，就能返回图片记录。VRAG demo 正是用文本 <code class="inline">&lt;search&gt;</code> 召回图片。</p>
+            </article>
+            <article class="mini-card">
+              <h3>文搜视频 / 文搜文本：也支持</h3>
+              <p><code class="inline">build_index()</code> 能把 <code class="inline">.mp4</code> 作为 <code class="inline">type='video'</code>，把 <code class="inline">.txt/.md/.json</code> 作为 <code class="inline">type='text'</code>。只要这些数据已入库，文本 query 可以搜到对应 modality 的记录。</p>
+            </article>
+            <article class="mini-card">
+              <h3>图搜图：模型层可做，当前 API 没直接开放</h3>
+              <p><code class="inline">Qwen3VLEmbedder.process()</code> 支持 <code class="inline">image</code> 输入，GVE 的 processor 也能处理 image/video。但当前 <code class="inline">SearchEngine.search()</code> 对 Qwen3-VL 分支写的是 <code class="inline">query_inputs = [{'text': query}]</code>，对 GVE 分支也把 query 包成 text content。</p>
+            </article>
+            <article class="mini-card">
+              <h3>图搜文：同理，当前未封装</h3>
+              <p>如果你改造 search 接口，让它接收 image path/base64 并用同一 embedding 模型编码成 query vector，那么可以在同一个 FAISS index 里搜文本/图片/视频记录。但仓库当前 FastAPI <code class="inline">/search</code> 只读取 <code class="inline">queries</code> 字符串列表。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <pre><code>当前源码的查询路径：
+POST /search {"queries": ["文本查询"], "top_k": 3}
+  -> SearchEngine.search(queries, top_k)
+  -> query_inputs = [{'text': query}]
+  -> FAISS search
+  -> 返回图片/文本/视频 metadata
+
+如果要图搜图/图搜文，需要新增类似：
+query_vec = embedder.process([{'image': image_path}], normalize=True)
+index.search(query_vec, top_k)</code></pre>
+
+          <div class="callout">结论：<strong>当前开箱即用是文搜多模态，尤其是文搜图。</strong>图搜图、图搜文在 embedding 模型层面有基础，但当前 search API 和 demo 没把 image query 作为入口封装出来。</div>
+          <div class="refs">参考：<code class="inline">/root/VRAG/search_engine/search_engine.py:128-144</code>、<code class="inline">/root/VRAG/search_engine/search_engine.py:281-330</code>、<code class="inline">/root/VRAG/search_engine/models/Qwen3_VL_Embedding/qwen3_vl_embedding.py:220-326</code>、<code class="inline">/root/VRAG/search_engine/search_engine_api.py:14-22</code>。</div>

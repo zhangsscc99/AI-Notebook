@@ -1,10 +1,70 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">35</div><h2>OpenClaw 记忆系统的更新和遗忘</h2></div>
+          <p>OpenClaw 的记忆更新不是“模型脑子里自动长出一条记忆”，而是<strong>文件源 → watcher / sync → chunk → index → search</strong> 的工程链路。长期记忆的真实源头通常是 workspace 里的 <code class="inline">MEMORY.md</code>、<code class="inline">memory/*.md</code>、extraPaths，以及可选的 session transcript。</p>
+          <div class="callout"><strong>一句话：</strong>OpenClaw 的“更新”主要是源文件变化后重新索引；“遗忘”主要是源文件删除/修改后清理索引、旧记忆分数衰减、预算压缩时丢弃自动晋升片段。默认不是让 LLM 自己随意删除记忆。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 更新从文件变化开始</h3>
+              <p><code class="inline">MemoryManagerSyncOps.ensureWatcher()</code> 会监听 <code class="inline">MEMORY.md</code>、<code class="inline">memory/</code> 和 extra paths。文件 <code class="inline">add/change/unlink/unlinkDir</code> 后会标 dirty，并触发延迟 sync。</p>
+              <p>sync 时会重新列出 memory files，读取 path、mtime、size、hash、content。hash 没变的文件跳过；新文件或内容变化的文件才重新切块、embedding、写入索引。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 索引层怎么替换旧内容</h3>
+              <p>每个 memory 文件会形成 file entry 和 chunks。文件内容变了以后，旧 chunks 会被替换；文件不再存在时，<code class="inline">syncMemoryFiles()</code> 会把 stale rows 从 files、chunks、vector table、FTS table 里删掉。</p>
+              <p>所以索引不是永久累积垃圾。真正的 source of truth 是 Markdown / transcript；索引只是为了检索加速和排序。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. 会话记忆是增量进入的</h3>
+              <p>session transcript 更新会触发 <code class="inline">onSessionTranscriptUpdate()</code>，经过 debounce 和 delta 阈值后再同步。源码里会避免每写一行 JSONL 都立即重建索引。</p>
+              <p><code class="inline">.jsonl.reset.*</code>、<code class="inline">.jsonl.deleted.*</code> 这类归档文件会作为一次性 dirty event 处理，用于让 session memory 搜索知道会话被 reset / delete 过。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 忘记不是神秘能力</h3>
+              <p>OpenClaw 的“忘记”首先是可审计的文件操作：你删除某个 Markdown 文件，或者删掉里面一段内容，下一次 sync 后对应 chunks 会从索引里消失。</p>
+              <p>这比“让模型自己决定遗忘”更工程化，因为你能在 Git / 文件系统里看到到底删除了什么。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>可以按这个流程记：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">用户、hook、session-memory 或人工编辑写入 <code class="inline">MEMORY.md</code> / <code class="inline">memory/*.md</code>。</div>
+            <div class="flow-step" data-step="2">chokidar watcher 捕获 add/change/unlink，标记 memory dirty。</div>
+            <div class="flow-step" data-step="3"><code class="inline">syncMemoryFiles()</code> 列文件、算 hash，只处理新增或变化文件。</div>
+            <div class="flow-step" data-step="4"><code class="inline">indexFile()</code> 把 Markdown 切成 chunks，写 SQLite / vector / FTS 或 QMD 后端。</div>
+            <div class="flow-step" data-step="5">文件被删除或不再属于 active paths 时，旧 file/chunk/vector/FTS 行被 prune。</div>
+            <div class="flow-step" data-step="6">之后 <code class="inline">memory_search</code> 只能召回当前索引里仍然存在、仍然得分够高的内容。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>时间衰减：降低旧 dated memory 权重</h3>
+              <p><code class="inline">temporal-decay.ts</code> 负责按半衰期降低旧记忆分数，默认半衰期约 30 天，而且默认可关闭。重要点：evergreen 路径，例如 <code class="inline">MEMORY.md</code> 或非日期 memory 文件，不会像 daily memory 那样自然衰减。</p>
+            </article>
+            <article class="mini-card">
+              <h3>预算压缩：只裁自动晋升区</h3>
+              <p><code class="inline">memory-budget.ts</code> 做 bounded <code class="inline">MEMORY.md</code> compaction。它主要删除最老的 <code class="inline">Promoted From Short-Term Memory</code> 自动晋升段，尽量保留用户手写内容。</p>
+            </article>
+            <article class="mini-card">
+              <h3>短期到长期：靠召回统计晋升</h3>
+              <p><code class="inline">short-term-promotion.ts</code> 会记录 recallCount、dailyCount、groundedCount、query hashes、concept tags 等。达到阈值后，频繁被用到的短期片段才会晋升进长期 Markdown。</p>
+            </article>
+            <article class="mini-card">
+              <h3>session-memory hook：reset 时落一份摘要</h3>
+              <p>内置 <code class="inline">session-memory</code> hook 会在 <code class="inline">/new</code> 或 <code class="inline">/reset</code> 时，把最近若干轮对话保存到 <code class="inline">workspace/memory/YYYY-MM-DD-HHMM.md</code>，作为可索引的长期材料。</p>
+            </article>
+          </div>
+
+          <pre><code>修改 memory/idea.md
+  → watcher 标 dirty
+  → syncMemoryFiles()
+  → hash 变化，重建该文件 chunks
+  → search 命中新内容
+
+删除 memory/old.md
+  → watcher 标 dirty
+  → active paths 里没有 old.md
+  → prune stale file/chunks/vector/FTS
+  → search 不再召回 old.md</code></pre>
+
+          <div class="callout">核心结论：OpenClaw 记忆系统的可信点在于“文件可编辑、索引可重建、删除可追踪”。更新和遗忘不是黑盒模型行为，而是围绕 Markdown source、session transcript、索引同步、时间衰减和预算压缩组成的生命周期。</div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/memory/manager-sync-ops.ts</code>、<code class="inline">extensions/memory-core/src/memory/temporal-decay.ts</code>、<code class="inline">extensions/memory-core/src/memory-budget.ts</code>、<code class="inline">extensions/memory-core/src/short-term-promotion.ts</code>、<code class="inline">src/hooks/bundled/session-memory/handler.ts</code>、<code class="inline">packages/memory-host-sdk/src/host/session-files.ts</code>、<code class="inline">extensions/memory-core/src/memory/qmd-manager.ts</code></div>

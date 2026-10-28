@@ -1,10 +1,57 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">33</div><h2>search 如何映射回原始 Markdown</h2></div>
+          <p>核心机制是：<strong>索引里的每个 chunk 都保留了原始 Markdown 文件坐标</strong>。RAG 找到的不是一段“失去来源的向量文本”，而是一条带 <code class="inline">path</code>、<code class="inline">startLine</code>、<code class="inline">endLine</code> 的搜索结果。模型拿到这些字段后，就能构造 <code class="inline">memory_get</code> 调用去读原始 Markdown。</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">sync 阶段读取 <code class="inline">MEMORY.md</code> / <code class="inline">memory/*.md</code>，生成 file entry：包含绝对路径、相对路径、hash、mtime、size。</div>
+            <div class="flow-step" data-step="2">chunking 阶段把文件切块，每个 chunk 记录 <code class="inline">startLine</code>、<code class="inline">endLine</code>、<code class="inline">text</code>、<code class="inline">hash</code>。</div>
+            <div class="flow-step" data-step="3">写索引时，builtin 后端把这些坐标写进 <code class="inline">chunks</code> 表，也同步写进 <code class="inline">chunks_fts</code> 和可选 <code class="inline">chunks_vec</code>。</div>
+            <div class="flow-step" data-step="4">search 阶段无论命中 FTS 还是 vector，SQL 都会取回 <code class="inline">path</code>、<code class="inline">start_line</code>、<code class="inline">end_line</code>、<code class="inline">text</code>。</div>
+            <div class="flow-step" data-step="5"><code class="inline">memory_search</code> 输出 JSON，把这些字段交给模型：<code class="inline">path</code>、<code class="inline">startLine</code>、<code class="inline">endLine</code>、<code class="inline">snippet</code>、<code class="inline">score</code>。</div>
+            <div class="flow-step" data-step="6">模型如果需要更多上下文，就用这些坐标构造 <code class="inline">memory_get({ path, from, lines })</code>。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>builtin 后端的数据链路可以简化成：</p>
+          <pre><code>Markdown file: memory/2026-05-13.md
+  line 40..65
+    ↓ chunkMarkdown()
+chunk {
+  path: "memory/2026-05-13.md",
+  startLine: 40,
+  endLine: 65,
+  text: "...",
+  hash: "..."
+}
+    ↓ writeChunks()
+SQLite chunks / chunks_fts / chunks_vec
+    ↓ memory_search()
+result {
+  path: "memory/2026-05-13.md",
+  startLine: 40,
+  endLine: 65,
+  snippet: "...",
+  score: 0.82
+}
+    ↓ model decides to verify
+memory_get({
+  path: "memory/2026-05-13.md",
+  from: 36,
+  lines: 45
+})</code></pre>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>模型怎么“知道”下一步调 get</h3>
+              <p>工具结果本身给了可读坐标；<code class="inline">memory_get</code> 工具描述又说明它是安全读取 memory 文件 excerpt 的工具。所以模型可以把 search result 的 <code class="inline">path/startLine/endLine</code> 直接转成 get 参数。</p>
+            </article>
+            <article class="mini-card">
+              <h3>OpenClaw 是否硬编码自动连调</h3>
+              <p>通常不是后端强制自动“search 后立刻 get”。后端负责提供结构化 search 结果和 get 工具。是否继续 get 是模型根据任务判断；但对于需要准确性的回答，正确行为就是 search 后 get。</p>
+            </article>
+            <article class="mini-card">
+              <h3>QMD 怎么映射</h3>
+              <p>QMD 返回 docid / collection / file 等信息。<code class="inline">QmdMemoryManager</code> 会把它解析成 <code class="inline">doc.rel</code>，如果文件在 workspace 内就返回正常相对路径；如果在 extra collection 里，就返回 <code class="inline">qmd/&lt;collection&gt;/...</code> 虚拟路径，保证 search → readFile 能 roundtrip。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么不是直接读全文</h3>
+              <p>因为 search result 已经有定位信息，读全文通常浪费 token。更稳的做法是从命中行附近扩展读取，比如 <code class="inline">from = startLine - 5</code>、<code class="inline">lines = 40</code>。</p>
+            </article>
+          </div>
+          <div class="callout">一句话：索引不是只存 embedding；它还存“这个 embedding 来自哪个 Markdown 文件的哪几行”。RAG 命中后，模型拿到 path + line range，再用 <code class="inline">memory_get</code> 回读 Markdown 原文。</div>
+          <div class="refs">参考：<code class="inline">packages/memory-host-sdk/src/host/types.ts</code>、<code class="inline">packages/memory-host-sdk/src/host/internal.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-embedding-ops.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-search.ts</code>、<code class="inline">extensions/memory-core/src/tools.ts</code>、<code class="inline">extensions/memory-core/src/memory/qmd-manager.ts</code></div>

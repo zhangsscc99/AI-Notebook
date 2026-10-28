@@ -1,10 +1,146 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header">
+            <span class="index">02</span>
+            <h2>Vanguard 轮岗面试里，这个项目哪些内容适合讲，怎么讲</h2>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>如果面试的是 Vanguard 两年 rotation 管培，方向覆盖风险分析、策略、交易执行、基金经理人管理、指数基金产品，那么这个项目不能包装成“我做了一个主动荐股系统”。更合适的定位是：<strong>我做了一个面向长期投资者的投资组合监控与分析平台，重点是组合透明度、被动投资跟踪、风险暴露识别、再平衡辅助和可解释报告，而不是给用户做短线投资建议。</strong></p>
+
+          <div class="callout"><strong>面试主线：</strong>把 Openfolio 讲成一个和 Vanguard 理念接近的 portfolio oversight / risk monitoring / index tracking support tool。它帮助投资者理解自己是否偏离目标配置、是否有集中度风险、是否需要再平衡，以及数据和报告如何支持稳健长期投资。</div>
+
+          <h3>1. 最适合拿来讲的项目角度</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>风险分析：组合暴露和集中度</h3>
+              <p>Vanguard 岗位会关心风险，而不是只关心收益。你可以讲项目里按资产类型聚合 <code class="inline">stocks / ETFs / crypto / cash / bonds</code>，计算每类资产市值、占比、盈亏，并识别集中度风险。这个点和 index fund 管理很贴：指数基金核心不是选股，而是控制暴露、理解权重、降低非预期风险。</p>
+            </article>
+            <article class="mini-card">
+              <h3>策略：长期配置和再平衡</h3>
+              <p>项目里的 AI analysis prompt 会要求输出 asset allocation、risk assessment、optimization recommendations、investment strategy。面试时不要说“系统建议买卖股票”，而要说“系统辅助长期配置决策，帮助用户发现配置偏离，并支持规则化再平衡讨论”。这更符合 Vanguard 的长期、低成本、纪律化投资理念。</p>
+            </article>
+            <article class="mini-card">
+              <h3>交易执行：从分析到可执行动作</h3>
+              <p>岗位提到 trading execution 时，可以讲你理解“交易不是预测市场，而是把组合目标落实成执行动作”。项目可以展示当前持仓、目标配置差异、需要调整的资产类别，后续可扩展成 order sizing、现金占用、交易成本、滑点、税务影响检查。重点是 execution quality 和 operational discipline。</p>
+            </article>
+            <article class="mini-card">
+              <h3>指数基金：跟踪而不是主动预测</h3>
+              <p>Vanguard 的 index fund / ETF 产品核心是复制指数，比如跟踪 S&amp;P 500。你可以说项目里的资产分类、权重计算、价格更新、历史表现和风险报告，可以自然扩展成 index tracking dashboard：比较 portfolio weights 与 benchmark weights、计算 tracking difference、识别 drift，并触发再平衡。</p>
+            </article>
+            <article class="mini-card">
+              <h3>基金经理人管理：外部经理 oversight</h3>
+              <p>如果主动投资外包给外部基金经理，Vanguard 仍然需要 manager oversight。这个项目适合讲“我做的不是替代基金经理，而是提供监控框架”：看持仓变化、风险暴露、表现归因、是否偏离授权风格、是否符合产品目标。AI 报告可以作为 analyst review 的起点，而不是最终投资结论。</p>
+            </article>
+            <article class="mini-card">
+              <h3>产品视角：服务普通长期投资者</h3>
+              <p>Vanguard 的产品语境是低成本、稳健、透明、长期复利。项目可以强调用户体验：把复杂 portfolio data 变成清楚的 dashboard、风险摘要、历史报告和 AI Assistant。它帮助用户理解“我持有什么、风险在哪里、是否偏离长期计划”。</p>
+            </article>
+          </div>
+
+          <h3>2. 面试里应该怎么描述这个项目</h3>
+          <pre><code>我做了一个 portfolio management and analysis platform。
+它的重点不是主动荐股，而是把投资组合数据结构化：
+1. 聚合持仓、价格、成本、当前市值和盈亏；
+2. 按资产类别计算配置比例和集中度；
+3. 用行情 API 更新价格和 daily change；
+4. 生成风险、配置、表现和再平衡相关的分析报告；
+5. 把分析结果保存成历史记录，并让 AI assistant 在对话前读取实时 portfolio。
+
+如果把它放到 Vanguard 的语境里，
+我会把它看成 index fund / ETF 和长期投资产品的 monitoring layer：
+帮助投资者或 analyst 检查组合是否仍然贴近目标配置，
+是否产生了 unintended exposure，
+以及是否需要纪律化再平衡。</code></pre>
+
+          <h3>3. 哪些功能最贴 Vanguard 岗位描述</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>Portfolio data pipeline。</strong>从数据库读取 assets / portfolios，计算 totalValue、currentValue、gainLoss、gainLossPercent、assetDistribution。这个能体现你理解投资系统的底层不是 AI，而是干净、可信、可追踪的数据。</div>
+            <div class="flow-step" data-step="2"><strong>Risk and allocation dashboard。</strong>Dashboard 展示 net worth、today's change、持仓分类、资产分布。面试时可以说这对应 risk analyst 的日常：先看风险暴露和权重，再看表现。</div>
+            <div class="flow-step" data-step="3"><strong>Market data integration。</strong>项目接了 Nasdaq、Stooq、腾讯港股、CoinGecko、Alpha Vantage 等免费 API。这个适合讲数据源 fallback、缓存、API 稳定性和生产环境可靠性。</div>
+            <div class="flow-step" data-step="4"><strong>AI report with guardrails。</strong>AI 用来生成解释型报告，但报告基于结构化 portfolio snapshot，并保存历史记录。可以讲“AI 是 analyst productivity tool，不是自动投资决策引擎”。</div>
+            <div class="flow-step" data-step="5"><strong>Real-time assistant context。</strong>AI Assistant 对话前读取实时持仓，避免脱离真实 portfolio。这个点适合讲产品严谨性：金融系统里上下文必须来自最新数据，不能只靠模型记忆。</div>
+          </div>
+
+          <h3>4. 怎么把项目和 index fund / S&amp;P 500 tracking 联系起来</h3>
+          <p>现在项目不是完整指数复制系统，但它已经具备指数基金系统的几块基础能力。你可以在面试里这样说：</p>
+          <ul>
+            <li><strong>当前已有：</strong>持仓列表、价格、权重、市值、盈亏、资产分类、历史报告、风险摘要。</li>
+            <li><strong>可以扩展：</strong>加入 benchmark holdings，比如 S&amp;P 500 成分股和权重，然后比较 portfolio weight 与 benchmark weight。</li>
+            <li><strong>可以计算：</strong>tracking difference、tracking error、sector drift、cash drag、rebalance amount。</li>
+            <li><strong>可以服务 ETF 管理：</strong>每天检查组合是否偏离指数，生成调仓清单，辅助交易执行团队按目标权重复制指数。</li>
+          </ul>
+
+          <div class="callout"><strong>关键表达：</strong>Vanguard 的被动投资不是“不做事”，而是把很多主动判断替换成规则、流程和纪律。指数复制需要数据质量、权重计算、风险控制、交易执行和异常监控。这个项目可以作为这些能力的轻量原型来讲。</div>
+
+          <h3>5. 怎么讲主动投资外包和基金经理人管理</h3>
+          <p>你可以说自己理解 Vanguard 即使把主动投资授权给外部经理，也仍然需要 manager selection、monitoring、risk oversight 和 product governance。Openfolio 项目能映射到这个 oversight layer：</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>看经理是否偏离风格</h3>
+              <p>如果一个外部经理被授权做 large-cap value，却实际暴露到 high-growth tech 或 crypto，这就是 style drift。项目里的资产分布、个股持仓、权重和风险摘要可以作为 drift monitoring 的基础。</p>
+            </article>
+            <article class="mini-card">
+              <h3>看风险是否和产品承诺一致</h3>
+              <p>Vanguard 产品需要对客户承诺清楚的风险收益特征。项目能展示 portfolio concentration、asset class exposure、daily change 和历史表现，帮助判断组合风险是否超出产品定位。</p>
+            </article>
+            <article class="mini-card">
+              <h3>看表现归因而不是只看收益</h3>
+              <p>外部经理收益高不一定好，可能来自更高风险暴露。项目可扩展成按资产、行业、风格、benchmark deviation 做归因，面试时可以说你意识到 performance 必须和 risk-adjusted return 一起看。</p>
+            </article>
+            <article class="mini-card">
+              <h3>把 AI 当作 review assistant</h3>
+              <p>AI 报告可以帮助 analyst 快速总结风险点和问题清单，但最终判断仍由投资委员会、风险团队或产品团队完成。这种说法比“AI 自动给投资建议”更适合 Vanguard。</p>
+            </article>
+          </div>
+
+          <h3>6. 面试里不要怎么说</h3>
+          <ul>
+            <li>不要说这个项目“预测股票涨跌”或“给用户荐股”。这和 Vanguard 被动投资、低成本、长期复利的品牌不匹配。</li>
+            <li>不要把 AI 说成最终投资决策者。应该说 AI 是解释和总结工具，核心决策仍要基于投资政策、benchmark、风险约束和人工 review。</li>
+            <li>不要只讲技术栈。Vanguard 面试更想听你如何理解资产管理业务、风险、流程、客户利益和长期投资。</li>
+            <li>不要把 crypto 作为主卖点。可以说系统支持多资产，但在 Vanguard 语境里重点放在 ETF、index fund、equity exposure、cash、risk controls。</li>
+          </ul>
+
+          <h3>7. 可以直接背的面试回答</h3>
+          <pre><code>One project I would connect to Vanguard is my portfolio analysis platform.
+I did not design it as a stock-picking or trading recommendation engine.
+The main idea was to create a monitoring and analytics layer for long-term investors.
+
+The system aggregates holdings, prices, cost basis, market value,
+daily change, gain/loss, and asset allocation.
+Then it generates an explainable report covering allocation, concentration risk,
+performance, rebalancing considerations, and investment strategy.
+
+What I think is relevant to Vanguard is the passive investing mindset:
+for an index fund or ETF, the goal is not to predict individual winners,
+but to maintain disciplined exposure to a benchmark,
+minimize unintended drift, control risk, and execute rebalancing efficiently.
+
+This project helped me think about the data pipeline behind that:
+how to keep portfolio data current, how to calculate weights and risk exposure,
+how to explain portfolio changes clearly, and how an AI assistant can support analysts
+without replacing the investment policy or fiduciary decision-making process.</code></pre>
+
+          <h3>8. 如果面试官追问“和 Vanguard 有什么关系”</h3>
+          <p>可以回答：</p>
+          <pre><code>Vanguard's core value proposition is long-term, low-cost, diversified investing.
+My project is aligned with that because it focuses on transparency,
+risk awareness, allocation discipline, and portfolio monitoring.
+
+For an S&amp;P 500 index product, the next step would be to add benchmark constituents
+and compare portfolio weights against index weights.
+Then the system could calculate tracking difference, identify drift,
+and produce a rebalancing list for execution.
+
+For externally managed active mandates, the same framework can support oversight:
+checking whether managers remain within mandate, whether risk exposure changes,
+and whether performance is explained by intended strategy or unintended bets.</code></pre>
+
+          <h3>9. 最终定位</h3>
+          <p>这个项目在 Vanguard 面试里最强的价值，不是“我会做 AI 炒股”，而是：</p>
+          <ul>
+            <li><strong>我理解资产管理的核心是组合、风险、流程和客户目标，而不是炫技预测。</strong></li>
+            <li><strong>我能把金融业务问题拆成数据、指标、报告、监控、执行这些系统模块。</strong></li>
+            <li><strong>我知道被动投资也需要严谨工程：指数复制、权重跟踪、再平衡、交易执行、异常监控。</strong></li>
+            <li><strong>我能合理使用 AI，但不会让 AI 越权成为投资决策主体。</strong></li>
+          </ul>
+
+          <div class="callout"><strong>结论：</strong>面试 Vanguard 时，这个项目应该讲成“长期投资组合监控和风险分析平台”。它最适合对应 rotation 里的 risk analysis、investment strategy、trading execution、index fund product support 和 external manager oversight。核心表达是：我支持稳健、被动、纪律化、可解释的投资流程，而不是主动荐股。</div>

@@ -1,10 +1,26 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">DSH2</div><h2>DeepSeek Harness 的插件化架构怎么工作</h2></div>
+
+          <p>DeepSeek Harness 的架构中心是 <strong>Cordis 插件树</strong>。插件把服务、类型化事件和可逆副作用注册到一个共享 context；其他插件通过类似 <code class="inline">ctx.tools</code>、<code class="inline">ctx.llm</code>、<code class="inline">ctx.sessions</code> 的 key 找到能力，而不是直接依赖某个具体实现。</p>
+
+          <div class="callout"><strong>一句话：</strong>Profile 决定启动哪些 bundle，bundle 携带可 patch 的插件配置，插件向 Cordis context 注册能力；卸载插件时，其注册和监听会被可逆地撤销。</div>
+
+          <h3>四层组合模型</h3>
+          <div class="flow">
+            <div class="flow-step"><strong>Profile</strong><br><code class="inline">web</code>、<code class="inline">headless</code>、<code class="inline">sdk</code>、<code class="inline">acp</code> 等具名应用组合。</div>
+            <div class="flow-step"><strong>Bundle</strong><br>分发一组 Cordis 配置项和挂载代码，例如共享基础层 <code class="inline">dsh-base</code>。</div>
+            <div class="flow-step"><strong>Patch</strong><br>按 id 替换整段 config 或插入新插件，支持 profile、home 和命令行 overlay。</div>
+            <div class="flow-step"><strong>Plugin Tree</strong><br>最终挂载的 Cordis 插件树，提供 Agent 实际运行所需的服务。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>核心服务</h3>
+          <div class="grid-2">
+            <article class="mini-card"><h3>Session</h3><p><code class="inline">ctx.sessions</code> 保存追加式事件日志。模型历史、transcript、resume、fork 和遥测都从持久事件派生。</p></article>
+            <article class="mini-card"><h3>Tools</h3><p><code class="inline">ctx.tools</code> 是作用域化工具注册表，并把 pre-execute、execute、post-execute 串成可拦截流水线。</p></article>
+            <article class="mini-card"><h3>LLM</h3><p><code class="inline">ctx.llm</code> 定义消息与流式词汇，具体 provider 以 adapter 形式插入。</p></article>
+            <article class="mini-card"><h3>Agent Loop</h3><p><code class="inline">ctx.agentLoop</code> 驱动 inbox、模型请求、工具调用、失败恢复和 turn 关闭。</p></article>
+          </div>
+
+          <h3>为什么这种架构可替换</h3>
+          <p>文件系统、进程、PTY、LSP、沙箱和 subagent 都通过 capability seam 连接。比如把文件系统与子进程 provider 指向远程沙箱，Bash、PTY 和 LSP 可以一起迁移，而不需要为每种工具复制一套 fork。模型可见的每个事实还必须可从 Session 日志重建，这使恢复、审计和 UI 投影共享同一真相源。</p>
+
+          <div class="refs">事实来源：DeepSeek Harness 官方 <code class="inline">docs/architecture.zh.md</code>、<code class="inline">docs/cordis-primer.md</code> 与 <code class="inline">packages/core</code>。</div>

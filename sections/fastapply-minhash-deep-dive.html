@@ -1,10 +1,40 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">24</div><h2>详解 MinHash</h2></div>
+          <p><strong>MinHash</strong> 是用来估计两个集合 Jaccard 相似度的压缩签名方法。它特别适合代码数据去重：不需要逐对比较完整代码，只比较很短的 signature。</p>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>把代码变集合。</strong> 先规范化代码：去空白、变量名抽象成 ID、数字抽象成 NUM，再切 token shingles。</div>
+            <div class="flow-step" data-step="2"><strong>做多组 hash。</strong> 对每个 shingle 用很多个 hash 函数计算哈希值。</div>
+            <div class="flow-step" data-step="3"><strong>每组取最小值。</strong> 每个 hash 函数只保留最小 hash，这些最小值拼起来就是 MinHash signature。</div>
+            <div class="flow-step" data-step="4"><strong>估计相似度。</strong> 两个 signature 对应位置相等的比例，大约等于两个原集合的 Jaccard 相似度。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么适合代码去重</h3>
+              <p>很多代码样本只是变量名、函数名、常量不同，结构几乎一样。MinHash 可以在“结构相似”层面发现近重复，比 exact hash 更强。</p>
+              <pre><code>def add_user(x): return db.save(x)
+def create_user(user): return db.save(user)
+# exact 不同，但 token/AST 结构很像</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>它不是语义等价判断</h3>
+              <p>MinHash 只看集合重叠，不懂程序语义。两个代码 token 很像但逻辑可能相反；两个代码 token 差异大也可能语义等价。所以它用于“候选去重”，不是最终 correctness reward。</p>
+            </article>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>参数影响</h3>
+              <ul>
+                <li>signature 越长，估计越稳定，但存储和计算更重。</li>
+                <li>shingle 越短，召回更高但误杀更多。</li>
+                <li>shingle 越长，更精确但漏掉轻微改写的重复。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>在本项目里的位置</h3>
+              <p><code class="inline">build/deduplicate.py</code> 目前保留了 <code class="inline">Signature</code> 接口，用轻量 hash fallback 跑通；真实大数据时可以替换成 datasketch MinHash。</p>
+            </article>
+          </div>
+
+          <div class="callout">一句话：MinHash 是把“大代码集合相似度”压缩成“小签名相似度”的办法，用来快速找近重复。</div>

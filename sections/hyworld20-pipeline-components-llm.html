@@ -1,10 +1,127 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">HW2</div><h2>HY-World 2.0 世界模型 pipeline 是怎么样的，用了哪些组件，用了 LLM 吗</h2></div>
+          <p>HY-World 2.0 的 pipeline 不是“一个 LLM 直接吐出 3D 世界”。源码里更准确的理解是：<strong>LLM/VLM 负责理解、标注、规划和生成文本条件；真正生成/重建 3D 世界的是全景生成模型、视频扩散模型、几何 Transformer、深度/法线/点云预测、3DGS 优化和 mesh 导出组件。</strong></p>
+          <div class="callout"><strong>一句话：</strong>HY-World 2.0 = 文本/图片/视频输入 → 全景或多视角条件 → VLM 辅助规划/描述 → WorldStereo 沿轨迹扩展新视角 → WorldMirror/几何模块预测相机、深度、法线、点云、GS 特征 → 3DGS/mesh 组合成可导航世界。用了 LLM/VLM，但 LLM 不是最终几何生成器。</div>
+
+          <h3>1. 它有两条主 pipeline：生成世界和重建世界</h3>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>World Generation：从想象生成世界</h3>
+              <pre><code>文本 / 单张图
+  → HY-Pano 2.0 生成 360° 全景图
+  → WorldNav / VLM / NavMesh 规划相机轨迹
+  → point-cloud trajectory rendering 渲染轨迹条件
+  → VLM 给轨迹视频写 caption
+  → WorldStereo 2.0 扩展新视角关键帧
+  → gen_gs_data 整理图片、深度、法线、相机
+  → world_gs_trainer 优化 3DGS
+  → 导出 PLY / SPZ / mesh / viewer</code></pre>
+              <p>这条线解决的是：给一个提示词或单图，系统自己补全一个可以移动视角、可以渲染、可以导出的 3D 场景。</p>
+            </article>
+            <article class="mini-card">
+              <h3>World Reconstruction：从真实多视角重建世界</h3>
+              <pre><code>多视角图片 / 视频帧
+  → WorldMirrorPipeline 预处理输入
+  → WorldMirror / VisualGeometryTransformer 跨视角建模
+  → CameraHead 预测相机
+  → DPTHead 预测深度、法线、点云
+  → GS head / renderer 预测或渲染 Gaussian 特征
+  → save_results 保存相机、depth、normal、points、3DGS
+  → 可进一步导出 3D 资产</code></pre>
+              <p>这条线解决的是：已有多张真实照片或视频时，把它们变成 digital twin / 3D reconstruction。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>2. World Generation 的线性执行顺序</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>HY-Pano 2.0：先把输入变成全景起点。</strong><code class="inline">hyworld2/panogen/pipeline.py</code> 使用 <code class="inline">HunyuanImage3ForCausalMM</code>；另一个轻量后端 <code class="inline">pipeline_with_qwen_image.py</code> 基于 <code class="inline">Qwen-Image-Edit</code>。这里的目标是得到 360° panorama，不是直接得到 3D mesh。</div>
+            <div class="flow-step" data-step="2"><strong>WorldNav：用视觉理解和几何约束规划路线。</strong><code class="inline">traj_generate.py</code> 会加载 MoGe、ZIM、GroundingDINO、SAM3，并通过 OpenAI-compatible client 调 vLLM 上的 Qwen3-VL，做环境分类、目标识别、导航目标选择；再结合 Recast/NavMesh 做避障路径。</div>
+            <div class="flow-step" data-step="3"><strong>Trajectory Rendering：把计划路线渲染成后续模型能吃的条件。</strong><code class="inline">traj_render.py</code> 沿相机轨迹渲染点云/深度/视频条件，并调用 <code class="inline">get_traj_caption()</code> 让 VLM 给轨迹内容生成 caption。</div>
+            <div class="flow-step" data-step="4"><strong>WorldStereo 2.0：真正扩展新视角。</strong><code class="inline">video_gen.py</code> 加载 <code class="inline">WorldStereo.from_pretrained("hanshanxue/WorldStereo")</code>。README 里说明它是 diffusion-based video generation model，Transformer backbone 扩展自 WanTransformer3DModel，并加入 camera embeddings 和 ControlNet point-cloud render 条件。</div>
+            <div class="flow-step" data-step="5"><strong>PanoramaMemoryBank：保持跨轨迹一致性。</strong><code class="inline">src/retrieval_wm.py</code> 里的 <code class="inline">PanoramaMemoryBank</code> 会检索已有全景/参考帧，给新轨迹生成提供 reference panorama injection，减少不同路线之间风格、物体和几何漂移。</div>
+            <div class="flow-step" data-step="6"><strong>3DGS 数据准备和训练。</strong><code class="inline">gen_gs_data.py</code> 整理帧、深度、法线、相机参数；<code class="inline">world_gs_trainer.py</code> 用 gsplat/MaskGaussian、depth/normal/LPIPS/SSIM 等 loss 优化 Gaussian Splatting，最后导出 <code class="inline">.ply</code>、<code class="inline">.spz</code> 或 mesh。</div>
+          </div>
+
+          <h3>3. 主要组件各自负责什么</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>HY-Pano 2.0</h3>
+              <p>全景图生成组件。输入文本/图片，输出 360° equirectangular panorama。它给后续世界生成提供“初始球面环境”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Qwen3-VL / vLLM / OpenAI API</h3>
+              <p>视觉语言理解组件。<code class="inline">traj_generate.py</code> 和 <code class="inline">vlm_utils.py</code> 用 <code class="inline">OpenAI(api_key="EMPTY", base_url="http://.../v1")</code> 调本地 vLLM 服务，模型名默认 <code class="inline">Qwen/Qwen3-VL-8B-Instruct</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>MoGe / ZIM / GroundingDINO / SAM3</h3>
+              <p>几何和语义感知组件。MoGe 给深度/法线几何先验；ZIM、GroundingDINO、SAM3 做分割、检测、语义 mask，辅助导航、天空/物体处理和后续一致性。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Recast / NavMesh</h3>
+              <p>传统导航组件。它不是神经网络，而是把可走区域、障碍物、路径搜索组织起来，让相机轨迹不是乱飞，而是更像在可通行空间里移动。</p>
+            </article>
+            <article class="mini-card">
+              <h3>WorldStereo 2.0</h3>
+              <p>世界扩展的核心生成模型。它基于视频扩散/Transformer，把轨迹条件、点云渲染条件、文本 caption、参考记忆变成沿相机路径的新视角关键帧。</p>
+            </article>
+            <article class="mini-card">
+              <h3>WorldMirror 2.0</h3>
+              <p>重建和几何预测组件。<code class="inline">WorldMirror</code> 里主干是 <code class="inline">VisualGeometryTransformer</code>，再接 <code class="inline">CameraHead</code>、<code class="inline">DPTHead</code>、GS 相关 head，输出相机、深度、法线、点云、GS 特征。</p>
+            </article>
+            <article class="mini-card">
+              <h3>UMT5 / text encoder</h3>
+              <p>WorldStereo pipeline 里有 <code class="inline">UMT5EncoderModel</code> 和 tokenizer，<code class="inline">_get_t5_prompt_embeds()</code> / <code class="inline">encode_prompt()</code> 把 caption/prompt 编成条件 embedding。这是文本条件编码器，不是一个负责规划的聊天 LLM。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3DGS / gsplat / mesh export</h3>
+              <p>最终资产化组件。3DGS 负责把多视角结果优化成可实时渲染的 Gaussian 表示；再导出 PLY、SPZ、mesh，才变成用户能保存、查看、导入引擎的 3D 世界。</p>
+            </article>
+          </div>
+
+          <h3>4. 到底用了 LLM 吗？用了，但位置要分清</h3>
+          <p><strong>用了 LLM/VLM。</strong>最明确的位置是 World Generation 的轨迹规划和轨迹 caption：</p>
+          <pre><code>// traj_generate.py：OpenAI-compatible 调本地 vLLM
+client = OpenAI(api_key="EMPTY", base_url=f"http://{LLM_ADDR}:{LLM_PORT}/v1")
+MODEL_NAME = "Qwen/Qwen3-VL-8B-Instruct"
+response = client.chat.completions.create(
+    model=MODEL_NAME,
+    messages=messages,
+    max_tokens=1024,
+    temperature=0.0,
+)</code></pre>
+          <p><code class="inline">traj_render.py</code> 还会调用 <code class="inline">get_traj_caption()</code>：从轨迹视频里均匀采样若干帧，转成 base64 image_url，发给 Qwen3-VL，让它生成视觉描述；这个 caption 后面会作为 WorldStereo 的文本条件之一。</p>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>LLM/VLM 做什么</h3>
+              <ul>
+                <li>判断场景类型，比如室内、街景、自然环境。</li>
+                <li>识别值得探索的目标和区域。</li>
+                <li>给轨迹视频写自然语言 caption。</li>
+                <li>把视觉语义转成后续生成模型更容易使用的文本条件。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>LLM/VLM 不做什么</h3>
+              <ul>
+                <li>不直接输出 3DGS 参数。</li>
+                <li>不直接输出 mesh 顶点和面。</li>
+                <li>不负责深度/法线/相机的主要数值预测。</li>
+                <li>不替代 WorldStereo、WorldMirror 和 3DGS 优化。</li>
+              </ul>
+            </article>
+          </div>
+
+          <h3>5. 一个具体例子：输入一张房间照片后发生什么</h3>
+          <pre><code>输入：一张房间照片
+
+1. HY-Pano 2.0 把照片扩成 360° 室内全景。
+2. Qwen3-VL 看全景，判断这是室内场景，识别门、桌子、窗户、走廊等目标。
+3. MoGe 估计深度/法线，SAM3/GroundingDINO/ZIM 提供 mask 和语义区域。
+4. NavMesh 根据可走区域规划相机路线：例如从门口走向窗户，再绕桌子一圈。
+5. traj_render.py 沿路线渲染点云条件视频，并让 Qwen3-VL 给这条路线写 caption。
+6. WorldStereo 2.0 根据 caption、相机轨迹、点云渲染、参考全景记忆，生成沿路线的新视角关键帧。
+7. gen_gs_data.py 把这些图像、深度、法线、相机参数整理成 3DGS 训练数据。
+8. world_gs_trainer.py 优化 Gaussian Splatting，导出可实时浏览的 3D 房间。</code></pre>
+
+          <div class="callout">所以要记住这个分工：<strong>LLM/VLM 是“语义理解 + 规划辅助 + caption 生成器”；WorldStereo 是“沿轨迹扩展像素/视角的生成器”；WorldMirror 是“多视角几何重建器”；3DGS 是“最终 3D 世界资产的可渲染表示”。</strong>HY-World 2.0 的强点正是把这些组件工程化串起来，而不是把所有事情都压给一个 LLM。</div>
+          <div class="refs">本地源码：<code class="inline">/root/HY-World-2.0</code>，当前 commit <code class="inline">ee5d5bc</code>。参考文件：<code class="inline">hyworld2/worldgen/README.md:1-140</code>、<code class="inline">hyworld2/worldgen/traj_generate.py:70-208</code>、<code class="inline">hyworld2/worldgen/traj_generate.py:260-272</code>、<code class="inline">hyworld2/worldgen/src/vlm_utils.py:150-190</code>、<code class="inline">hyworld2/worldgen/video_gen.py:75-145</code>、<code class="inline">hyworld2/worldgen/models/pipelines/_pipeline_common.py:91-175</code>、<code class="inline">hyworld2/panogen/pipeline.py:170-210</code>、<code class="inline">hyworld2/worldrecon/hyworldmirror/models/models/worldmirror.py:120-235</code>、<code class="inline">hyworld2/worldrecon/pipeline.py:399-539</code>。</div>

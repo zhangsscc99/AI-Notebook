@@ -1,10 +1,62 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">COS2</div><h2>NVIDIA Cosmos 的 pipeline 详解</h2></div>
+          <p>Cosmos 的 pipeline 要分三层看：<strong>Diffusion Text2World / Video2World</strong>、<strong>Autoregressive Video2World</strong>、以及所有路线共用的 <strong>Tokenizer / Text Encoder / Guardrail / Prompt Upsampler</strong>。它不是一个单文件单模型，而是一套把输入条件、latent/token 表示、生成主干和安全过滤串起来的世界视频生成系统。</p>
+          <div class="callout"><strong>一句话：</strong>Cosmos pipeline 的核心是“先把文本和视频压到模型能处理的条件/latent/token 空间，再用 diffusion 或 autoregressive 主干生成未来世界视频，最后解码回像素并做安全过滤”。</div>
+
+          <h3>1. Diffusion Text2World：文本生成世界视频</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>输入 prompt。</strong>入口是 <code class="inline">cosmos1/models/diffusion/inference/text2world.py</code>，核心类是 <code class="inline">DiffusionText2WorldGenerationPipeline</code>。</div>
+            <div class="flow-step" data-step="2"><strong>pre-Guard。</strong><code class="inline">BaseWorldGenerationPipeline</code> 会调用 text guardrail，先检查输入 prompt 是否安全。</div>
+            <div class="flow-step" data-step="3"><strong>Prompt Upsampler。</strong>如果启用，<code class="inline">_run_prompt_upsampler_on_prompt()</code> 会把短 prompt 扩写成更具体的影视/场景描述，再跑一次 guardrail。</div>
+            <div class="flow-step" data-step="4"><strong>T5 文本编码。</strong><code class="inline">CosmosT5TextEncoder</code> 默认加载 <code class="inline">google-t5/t5-11b</code>，输出 <code class="inline">[batch, 512, hidden]</code> 级别的文本 hidden states，作为 diffusion cross-attention 条件。</div>
+            <div class="flow-step" data-step="5"><strong>构造视频 latent shape。</strong><code class="inline">get_video_batch()</code> 根据目标 <code class="inline">height/width/fps/num_video_frames</code> 和 tokenizer 压缩率，算出 latent 的 <code class="inline">[C,T,H,W]</code>。</div>
+            <div class="flow-step" data-step="6"><strong>从噪声开始采样。</strong><code class="inline">generate_world_from_text()</code> 用随机噪声 <code class="inline">x_sigma_max</code> 初始化 latent，然后调用 <code class="inline">model.generate_samples_from_batch()</code> 迭代去噪。</div>
+            <div class="flow-step" data-step="7"><strong>DiT 去噪主干。</strong><code class="inline">DiffusionT2WModel.denoise()</code> 把 noisy latent、噪声级别 sigma、文本条件送进 <code class="inline">GeneralDIT</code>，预测干净 latent <code class="inline">x0</code> 和噪声 <code class="inline">eps</code>。</div>
+            <div class="flow-step" data-step="8"><strong>Tokenizer decoder 解码视频。</strong><code class="inline">_run_tokenizer_decoding()</code> 调 <code class="inline">self.model.decode(sample)</code>，把 latent 还原成 <code class="inline">[T,H,W,C]</code> 视频帧。</div>
+            <div class="flow-step" data-step="9"><strong>post-Guard。</strong>生成视频再经过 video content safety filter 和 face blur，安全才返回。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>2. Diffusion Video2World：给图片/短视频，生成后续世界</h3>
+          <p>Video2World 和 Text2World 的差别是多了一个<strong>视觉条件 latent</strong>。</p>
+          <pre><code>输入图片/视频 + prompt
+  → 读入并 resize/crop 到模型需要的尺寸
+  → tokenizer.encode 得到 condition_latent
+  → 前 N 个 latent 时间步标为 condition region
+  → 其余时间步从噪声开始生成
+  → DiT 每一步同时看文本条件和视频条件 mask
+  → 保留输入条件区域，生成未来区域
+  → tokenizer.decode 输出视频</code></pre>
+          <p>源码里关键点在 <code class="inline">DiffusionV2WModel</code>：<code class="inline">get_condition_latent()</code> 先把输入图/视频编码成 latent；<code class="inline">add_condition_video_indicator_and_video_input_mask()</code> 用 <code class="inline">condition_video_indicator</code> 标出哪些时间步是输入条件；<code class="inline">denoise()</code> 会把条件区域的 latent 和生成区域的 noisy latent 拼在一起，并在 <code class="inline">x0_pred_replaced</code> 里把条件区替换回 ground-truth latent，避免第一段输入被模型乱改。</p>
+
+          <h3>3. Autoregressive pipeline：先预测视觉 token，再用 diffusion decoder 增强</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>输入上下文。</strong>Base AR 接图片/视频；AR Video2World 还接文本 prompt。典型是 1 张图或 9 帧短视频，生成到 33 帧。</div>
+            <div class="flow-step" data-step="2"><strong>视频 tokenizer 离散化。</strong><code class="inline">DiscreteMultimodalTokenizer</code> 把视频编码成离散 video tokens。这里 Cosmos 更接近 LLM 的 token 生成方式，但 token 不是文字，而是视频 latent 网格上的视觉 token。</div>
+            <div class="flow-step" data-step="3"><strong>AR Transformer 预测未来 token。</strong><code class="inline">generate_partial_tokens_from_data_batch()</code> 计算还需要生成多少 token，然后 <code class="inline">generate_video_from_tokens()</code> 调 <code class="inline">self.model.generate()</code>，用 top-p、temperature 等采样参数生成后续视觉 token。</div>
+            <div class="flow-step" data-step="4"><strong>reshape 成视频 token 网格。</strong>生成出来的一维 token 序列会被 reshape 成 <code class="inline">[B,T,H,W]</code> 的视频 token 网格。</div>
+            <div class="flow-step" data-step="5"><strong>tokenizer decode 初步视频。</strong><code class="inline">video_tokenizer.decode(indices_tensor)</code> 把离散 token 解码回视频。</div>
+            <div class="flow-step" data-step="6"><strong>diffusion decoder 可选增强。</strong><code class="inline">diffusion_decoder_process_tokens()</code> 用 diffusion decoder 对 AR token 结果做画质增强和细节补足。</div>
+            <div class="flow-step" data-step="7"><strong>输出安全过滤。</strong>同样走 post-Guard，最后返回 numpy 视频帧。</div>
+          </div>
+
+          <h3>4. 三个底座组件要单独记</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Cosmos Tokenizer</h3>
+              <p>它是视频世界模型的压缩器。Diffusion 走 continuous latent；AR 走 discrete visual token。README 里写到空间压缩 8x/16x、时间压缩 4x/8x，最大总压缩可到 2048x。没有它，大模型直接处理原始视频像素成本太高。</p>
+            </article>
+            <article class="mini-card">
+              <h3>GeneralDIT</h3>
+              <p>Diffusion 路线的核心网络。配置里 <code class="inline">FADITV2Config</code> 使用 <code class="inline">GeneralDIT</code>，输入通道和输出通道都是 latent 通道，带 3D RoPE、cross-attention、时空 patch，用于在视频 latent 空间去噪。</p>
+            </article>
+            <article class="mini-card">
+              <h3>AutoRegressiveModel</h3>
+              <p>AR 路线的核心网络。源码注释虽然沿用了“text generation”的表述，但实际这里的 vocab 被扩展为 video tokenizer 的 vocab，模型生成的是视觉 token，而不是自然语言 token。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Guardrail</h3>
+              <p>pre-Guard 检查输入文本；post-Guard 检查输出视频并做人脸模糊。它不保证物理真实，但保证安全合规是推理链路的一部分。</p>
+            </article>
+          </div>
+
+          <div class="callout">记忆方式：<strong>Diffusion Cosmos = prompt/视频条件 → T5/condition latent → DiT latent 去噪 → tokenizer decode；AR Cosmos = 输入视频 token → Transformer 预测未来 token → tokenizer/diffusion decoder 还原视频。</strong></div>
+          <div class="refs">参考源码：<code class="inline">/root/cosmos</code>，分支 <code class="inline">archived-ces2025</code>，commit <code class="inline">f0679c8</code>。文件：<code class="inline">cosmos1/models/diffusion/inference/world_generation_pipeline.py:56-645</code>、<code class="inline">cosmos1/models/diffusion/inference/inference_utils.py:360-735</code>、<code class="inline">cosmos1/models/diffusion/model/model_t2w.py:42-310</code>、<code class="inline">cosmos1/models/diffusion/model/model_v2w.py:38-390</code>、<code class="inline">cosmos1/models/diffusion/networks/general_dit.py</code>、<code class="inline">cosmos1/models/autoregressive/inference/world_generation_pipeline.py:138-910</code>、<code class="inline">cosmos1/models/autoregressive/model.py:42-150</code>、<code class="inline">cosmos1/models/tokenizer/README.md</code>。</div>

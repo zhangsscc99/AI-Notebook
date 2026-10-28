@@ -1,10 +1,107 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">HS8</div><h2>Hermes Agent 的 execute_code 是什么</h2></div>
+          <p><code class="inline">execute_code</code> 是 Hermes 里的一个特殊工具：它让模型写一段 Python 脚本，在脚本里批量调用 Hermes 工具，比如 <code class="inline">read_file</code>、<code class="inline">search_files</code>、<code class="inline">terminal</code>、<code class="inline">web_search</code>，然后只把脚本最终输出返回给主模型。</p>
+          <div class="callout"><strong>一句话：</strong><code class="inline">execute_code</code> 不是普通 shell，也不是 Docker 本身；它是“Python 脚本 + 受限 Hermes 工具 RPC + 输出压缩/脱敏/限制”的组合，用来做多步工具自动化和上下文工程。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 它解决什么问题</h3>
+              <p>普通 agent 如果要查 30 个文件、跑 5 个命令、过滤 1000 行日志，可能会产生很多工具调用结果。这些中间输出都会挤占上下文。</p>
+              <p><code class="inline">execute_code</code> 的作用是：把这些低级过程放进一个 Python 脚本里做，最后只输出整理后的结果。</p>
+              <pre><code>bad:
+  model sees every search/read/terminal output
+
+better:
+  execute_code runs search/read/terminal internally
+  script filters and summarizes
+  model only sees final compact answer</code></pre>
+            </article>
+
+            <article class="mini-card">
+              <h3>2. 它怎么调用 Hermes 工具</h3>
+              <p>Hermes 会自动生成一个 <code class="inline">hermes_tools.py</code> 模块。脚本里不是直接访问 Hermes 内部对象，而是这样调用工具：</p>
+              <pre><code>from hermes_tools import search_files, read_file, terminal
+
+matches = search_files("AuthError", path="src", limit=20)
+content = read_file("src/auth.py", offset=1, limit=120)
+test = terminal("pytest tests/auth -q")
+
+print({
+  "matches": matches,
+  "test_summary": test["output"][-1000:]
+})</code></pre>
+              <p>这个 <code class="inline">hermes_tools.py</code> 背后通过 RPC 回到 Hermes 主进程，由主进程执行被允许的工具。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>3. 为什么说它是“受限”的</h3>
+              <p>脚本不是想调什么都能调。Hermes 会给 <code class="inline">execute_code</code> 一个允许工具集合；如果脚本调用不在白名单里的工具，会被拒绝。</p>
+              <p>它还有执行限制，例如 timeout、stdout 上限、工具调用次数上限。输出还会做 secret redaction，避免 token/API key 进入模型上下文。</p>
+              <p><strong>意义：</strong>让模型能写脚本自动化工具流程，但不能无限制地把所有工具和所有输出都暴露出来。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>4. 和 terminal 的区别</h3>
+              <p><code class="inline">terminal</code> 是直接跑一条 shell 命令，比如 <code class="inline">pytest -q</code>、<code class="inline">npm install</code>。</p>
+              <p><code class="inline">execute_code</code> 是跑一段 Python 控制逻辑，Python 里可以循环、分支、解析 JSON、调用多个 Hermes 工具、过滤结果。</p>
+              <pre><code>terminal:
+  run one shell command
+
+execute_code:
+  run Python orchestration
+  call many tools
+  process outputs
+  return one compact result</code></pre>
+            </article>
+
+            <article class="mini-card">
+              <h3>5. 和 Docker 沙箱的区别</h3>
+              <p>Docker 回答的是“命令在哪台机器/哪个容器里执行”。</p>
+              <p><code class="inline">execute_code</code> 回答的是“多步工具过程怎么在一个脚本里完成，并只返回必要结果”。</p>
+              <div class="callout">两者可以叠加：如果当前 terminal backend 是 Docker，<code class="inline">execute_code</code> 里的 <code class="inline">terminal()</code> 调用也会通过 Docker backend 去执行。</div>
+            </article>
+
+            <article class="mini-card">
+              <h3>6. project 模式 vs strict 模式</h3>
+              <p>Hermes 的 <code class="inline">execute_code</code> 有执行模式概念：</p>
+              <ul>
+                <li><strong>project：</strong>默认更贴近当前项目，脚本在 session working directory，用项目的 active venv/conda Python，方便 import 项目依赖。</li>
+                <li><strong>strict：</strong>脚本在临时目录，用 Hermes 自己的 Python，更隔离、更可复现，但相对不方便直接用项目依赖和相对路径。</li>
+              </ul>
+              <p>所以它不是永远“完全隔离临时目录”；具体行为取决于配置。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>模型决定需要批处理。</strong>例如要查很多文件、跑多个命令、过滤日志。</div>
+            <div class="flow-step" data-step="2"><strong>Hermes 创建执行脚本。</strong>把模型写的 Python 和自动生成的 <code class="inline">hermes_tools.py</code> 放到执行环境里。</div>
+            <div class="flow-step" data-step="3"><strong>脚本调用工具。</strong>通过 <code class="inline">hermes_tools</code> 调用 read/search/terminal/web 等白名单工具。</div>
+            <div class="flow-step" data-step="4"><strong>脚本内部处理结果。</strong>过滤、排序、去重、聚合、摘要、截断。</div>
+            <div class="flow-step" data-step="5"><strong>只返回 stdout。</strong>主模型主要看到脚本打印出来的最终结果，而不是全部中间过程。</div>
+            <div class="flow-step" data-step="6"><strong>Hermes 做安全处理。</strong>限制工具、限制时间/输出/次数，并对输出做 secret redaction。</div>
+          </div>
+
+          <pre><code>execute_code mental model
+
+model writes Python
+  -> Hermes generates hermes_tools.py
+  -> script runs in project or strict mode
+  -> script calls allowed Hermes tools through RPC
+  -> script processes noisy outputs internally
+  -> script prints compact final result
+  -> Hermes redacts secrets and returns stdout to model
+
+best use cases:
+  - batch search/read across many files
+  - parse long test logs
+  - call 3+ tools with logic between calls
+  - loop/retry/filter/rank/dedupe
+  - reduce tool output before it enters context
+
+not best for:
+  - one simple command
+  - interactive terminal sessions
+  - tasks needing human input mid-script
+  - replacing Docker/OS isolation</code></pre>
+
+          <div class="callout"><strong>最终理解：</strong><code class="inline">execute_code</code> 是 Hermes 的“工具编排脚本沙箱”。它让模型用 Python 写一个小 worker，替主模型做繁琐工具流程，最后只把有价值的压缩结果交回来。</div>
+          <div class="refs">参考：<code class="inline">/root/hermes/tools/code_execution_tool.py</code>、<code class="inline">generate_hermes_tools_module</code>、<code class="inline">build_execute_code_schema</code>、<code class="inline">EXECUTION_MODES = ("project", "strict")</code></div>

@@ -1,10 +1,69 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">CT4</div><h2>Claude Code 权限控制怎么做</h2></div>
+          <p>Claude Code 的权限控制不是单个弹窗。它是一条工具执行前的闸门链路：<strong>schema 校验 → 工具 validateInput → PreToolUse hooks → hook permission decision → 工具 checkPermissions → 通用 allow/deny/ask 规则 → 交互/SDK/远程/多 agent 权限处理器 → tool.call</strong>。</p>
+          <div class="callout"><strong>一句话：</strong>模型只能提出 tool_use；真正能不能执行，由 Claude Code 本地权限系统、hooks、sandbox、用户确认和多 agent leader 共同决定。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 入口在 runToolUse</h3>
+              <p><code class="inline">src/services/tools/toolExecution.ts</code> 先按工具名查找工具，再执行 <code class="inline">tool.inputSchema.safeParse()</code>。参数结构错了，直接返回错误 <code class="inline">tool_result</code>，不会进入权限或真实执行。</p>
+              <p>schema 过了以后，才进入 <code class="inline">checkPermissionsAndCallTool()</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. Hooks 可以先拦截</h3>
+              <p><code class="inline">PreToolUse</code> hook 可以 block、修改 input，或返回 permission decision。<code class="inline">resolveHookPermissionDecision()</code> 会把 hook 决策并入权限判断。</p>
+              <p>这让团队可以配置“某些命令永远要问”“某些路径禁止写”“某些工具调用前先跑审计脚本”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. 工具有自己的权限逻辑</h3>
+              <p>每个工具可以实现 <code class="inline">checkPermissions()</code>。Bash / PowerShell 权限尤其细，会分析子命令、路径、危险模式、是否适合沙箱，以及 allow/deny/ask 规则。</p>
+              <p>文件编辑工具也可以根据路径、是否已读、是否写到工作区外等条件做约束。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 通用权限规则决定 allow / deny / ask</h3>
+              <p><code class="inline">src/utils/permissions/permissions.ts</code> 处理通用 allow/deny/ask。显式 deny 通常优先于 allow；需要询问时，会交给 UI、SDK host、remote coordinator 或 swarm leader。</p>
+              <p>非交互/headless 场景通常更偏 fail-closed：不能问用户时，不会默默执行高风险动作。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>一次 Bash 权限判断可以这样理解：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">模型发出 <code class="inline">Bash({ command: "rm -rf build" })</code>。</div>
+            <div class="flow-step" data-step="2"><code class="inline">runToolUse()</code> 校验 JSON schema 和工具输入。</div>
+            <div class="flow-step" data-step="3"><code class="inline">PreToolUse</code> hooks 根据 <code class="inline">Bash(rm *)</code> 等 matcher 先检查或阻断。</div>
+            <div class="flow-step" data-step="4"><code class="inline">BashTool.checkPermissions()</code> 分析命令、路径、是否命中 deny/ask/allow、是否可沙箱执行。</div>
+            <div class="flow-step" data-step="5">如果需要 ask，interactive / SDK / coordinator / swarm worker handler 把请求交给人或 leader。</div>
+            <div class="flow-step" data-step="6">allow 才执行 <code class="inline">tool.call()</code>；deny 则返回错误 <code class="inline">tool_result</code> 给模型修正。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Permission mode</h3>
+              <p><code class="inline">PermissionMode.ts</code> 里能看到不同模式：默认模式、accept edits / plan 相关行为、auto mode、dontAsk 转 deny、bypass permissions 等。模式会改变 ask/allow/deny 的策略。</p>
+            </article>
+            <article class="mini-card">
+              <h3>危险跳过不是无条件开放</h3>
+              <p><code class="inline">--dangerously-skip-permissions</code> 仍会被 setup 检查约束。源码里会避免在不安全环境里让用户随便绕过权限，例如非沙箱、联网、root/sudo 等组合。</p>
+            </article>
+            <article class="mini-card">
+              <h3>沙箱会改变 Bash 的风险模型</h3>
+              <p>如果命令会在 sandbox 内跑，并且没有显式 deny/ask 规则，<code class="inline">sandbox.autoAllowBashIfSandboxed</code> 可以减少弹窗。含义是允许命令执行，但把文件系统和网络边界交给 sandbox 限制。</p>
+            </article>
+            <article class="mini-card">
+              <h3>多 agent 权限会转交 leader</h3>
+              <p>Agent Team / swarm worker 自己不应该随意批准高风险动作。<code class="inline">coordinatorHandler</code>、<code class="inline">swarmWorkerHandler</code>、mailbox/poller 相关代码会把权限请求转给 leader 或用户侧处理。</p>
+            </article>
+          </div>
+
+          <pre><code>tool_use
+  → inputSchema.safeParse
+  → tool.validateInput
+  → run PreToolUse hooks
+  → resolve hook permission decision
+  → tool.checkPermissions
+  → allow/deny/ask rules
+  → interactive / SDK / coordinator / swarm handler
+  → allowed: tool.call
+  → denied: error tool_result returned to model</code></pre>
+
+          <div class="callout">关键心智模型：<strong>Claude Code 权限控制是执行前闸门，不是事后审计。</strong>它把模型意图转成可验证工具调用，再用规则、hook、人类确认、沙箱和多 agent 转交机制决定是否放行。</div>
+          <div class="refs">参考文件：<code class="inline">src/services/tools/toolExecution.ts</code>、<code class="inline">src/utils/permissions/permissions.ts</code>、<code class="inline">src/hooks/useCanUseTool.tsx</code>、<code class="inline">src/hooks/toolPermission/handlers/interactiveHandler.ts</code>、<code class="inline">src/hooks/toolPermission/handlers/coordinatorHandler.ts</code>、<code class="inline">src/hooks/toolPermission/handlers/swarmWorkerHandler.ts</code>、<code class="inline">src/utils/permissions/PermissionMode.ts</code>、<code class="inline">src/tools/BashTool/bashPermissions.ts</code>、<code class="inline">src/tools/PowerShellTool/powershellPermissions.ts</code>、<code class="inline">src/utils/sandbox/sandbox-adapter.ts</code>。</div>

@@ -1,10 +1,20 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
-          </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+<div class="section-header"><div class="index">12</div><h2>启动时如何注入 memory，以及 compaction 前为什么会 flush</h2></div>
+          <p>启动时并不会把全部 memory 都塞进模型上下文，而是会受预算限制：</p>
+          <ul>
+            <li>每个文件最大字节数</li>
+            <li>每个文件最大字符数</li>
+            <li>总注入字符上限</li>
+            <li>默认只带最近几天 daily memory</li>
+          </ul>
+          <pre><code>src/auto-reply/reply/startup-context.ts
+- maxFileBytes
+- maxFileChars
+- maxTotalChars
+- dailyMemoryDays</code></pre>
+          <p>另外，在 compaction 前，OpenClaw 会做一次 memory flush，提醒系统把值得保留的东西写进当日 memory 文件里。</p>
+          <pre><code>extensions/memory-core/src/flush-plan.ts
+- write to memory/YYYY-MM-DD.md
+- append only
+- do not overwrite MEMORY.md / DREAMS.md / AGENTS.md</code></pre>
+          <div class="callout">设计意图非常清楚：<strong>在上下文被压缩前，先把重要信息落盘</strong>，防止 compaction 后“只剩摘要、原信息丢失”。</div>
+          <div class="refs">参考：<code class="inline">src/auto-reply/reply/startup-context.ts:7-15</code>、<code class="inline">extensions/memory-core/src/flush-plan.ts:95-139</code>、<code class="inline">src/auto-reply/reply/agent-runner-memory.ts:696-820</code></div>

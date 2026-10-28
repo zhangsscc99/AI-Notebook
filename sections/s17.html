@@ -1,10 +1,33 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
-          </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+<div class="section-header"><div class="index">17</div><h2>memory_get 工具详解</h2></div>
+          <p><code class="inline">memory_get</code> 的定位不是搜索，而是<strong>按路径精确读取一段记忆文件</strong>。通常流程是先用 <code class="inline">memory_search</code> 找到相关片段，再用 <code class="inline">memory_get</code> 拉取更完整、可核对的原文行。</p>
+          <p>它的参数很少：</p>
+          <ul>
+            <li><code class="inline">path</code>：必填，要读取的 memory 文件路径。</li>
+            <li><code class="inline">from</code>：可选，从第几行开始读。</li>
+            <li><code class="inline">lines</code>：可选，读取多少行。</li>
+            <li><code class="inline">corpus</code>：可选，<code class="inline">memory</code>、<code class="inline">wiki</code>、<code class="inline">all</code>。</li>
+          </ul>
+          <pre><code>MemoryGetSchema = {
+  path: string,
+  from?: number,
+  lines?: number,
+  corpus?: "memory" | "wiki" | "all"
+}</code></pre>
+          <p>执行时会先解析当前 agent 和配置。如果 memory search 被禁用，工具不会被创建。真正执行时，它按 corpus 和 backend 分支：</p>
+          <ul>
+            <li><code class="inline">corpus=wiki</code>：直接去 registered corpus supplement 里读，比如 memory-wiki。</li>
+            <li><code class="inline">builtin</code> backend：调用 <code class="inline">readAgentMemoryFile</code>，再进入 <code class="inline">readMemoryFile</code>。</li>
+            <li><code class="inline">qmd</code> backend：先拿 <code class="inline">MemorySearchManager</code>，再调用它的 <code class="inline">readFile</code>。</li>
+            <li><code class="inline">corpus=all</code>：如果 memory 文件读取失败，会尝试从 supplement 里 fallback。</li>
+          </ul>
+          <p>它返回的核心结果是：</p>
+          <pre><code>{
+  path: string,
+  text: string,
+  from?: number,
+  lines?: number,
+  truncated?: true,
+  nextFrom?: number
+}</code></pre>
+          <div class="callout"><code class="inline">memory_get</code> 的关键点是“安全精确读取”：它不会全量暴力读取所有 memory，也不会随便读 workspace 里任意文件。</div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/tools.ts:391-459</code>、<code class="inline">extensions/memory-core/src/tools.shared.ts:38-44</code>、<code class="inline">packages/memory-host-sdk/src/host/read-file.ts:48-156</code></div>

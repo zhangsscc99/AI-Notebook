@@ -1,10 +1,30 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">30</div><h2>被问 OpenClaw 怎么搞记忆时怎么答</h2></div>
+          <p>如果别人问“OpenClaw 是怎么搞记忆的”，不要回答成“它有 RAG”这么浅。更准确的回答是：</p>
+          <div class="callout"><strong>OpenClaw 的记忆是文件驱动的长期记忆系统。</strong>重要信息先写进 <code class="inline">MEMORY.md</code> 或 <code class="inline">memory/YYYY-MM-DD.md</code> 这类可审计文件，然后 memory-core 或 QMD 把这些文件切成 chunks、建立 FTS/向量索引。模型需要旧信息时先用 <code class="inline">memory_search</code> 检索相关片段，再用 <code class="inline">memory_get</code> 按路径和行号回读原文。临近 compaction 时还有 memory flush，把当前会话里值得长期保存的信息追加到当天 memory 文件。</div>
+          <p>你可以按场景用下面三种说法。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>30 秒版本</h3>
+              <p>OpenClaw 不是把记忆藏在模型脑子里，而是把记忆显式写成文件。然后它对这些文件建索引，搜索时召回片段，需要核实时再按行读取原文。所以它的 memory 是“文件落盘 + 索引检索 + 原文回读 + compaction 前保全”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>源码版本</h3>
+              <p>工具入口是 <code class="inline">memory_search</code> 和 <code class="inline">memory_get</code>。它们通过 <code class="inline">getMemorySearchManager</code> 拿到 backend manager。builtin 后端是 <code class="inline">MemoryIndexManager</code>，用 SQLite、FTS5、可选 sqlite-vec；QMD 后端是 <code class="inline">QmdMemoryManager</code>，把检索交给 qmd sidecar。</p>
+            </article>
+            <article class="mini-card">
+              <h3>和普通 RAG 的区别</h3>
+              <p>RAG 只是其中的检索部分。OpenClaw 还包括启动注入、memory flush、session transcript indexing、dreaming / promotion、memory-wiki、registered corpus supplements，以及 <code class="inline">memory_get</code> 这种精确原文读取。</p>
+            </article>
+            <article class="mini-card">
+              <h3>一句话判断重点</h3>
+              <p>问“它记住了吗”时，关键不是模型有没有印象，而是信息有没有落盘、有没有被 sync 建索引、搜索结果能不能通过 <code class="inline">memory_get</code> 找回原文。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>推荐你实际回答时按这个结构：</p>
+          <pre><code>1. 先说本质：文件驱动，不是模型内部魔法记忆。
+2. 再说流程：写文件 -> sync -> chunk -> FTS/vector/QMD index -> memory_search -> memory_get。
+3. 再说后端：默认 builtin SQLite/FTS/vector；也可以切到 QMD。
+4. 再说扩展：compaction 前 flush，session memory，dreaming，memory-wiki。
+5. 最后强调边界：只有落盘并被允许索引/读取的内容，才算可用记忆。</code></pre>
+          <div class="callout">最稳的短答：OpenClaw memory = durable markdown files + searchable index + exact source readback + lifecycle automation。这个答案比单说“RAG”准确得多。</div>
+          <div class="refs">参考：<code class="inline">docs/concepts/memory.md</code>、<code class="inline">extensions/memory-core/src/tools.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager.ts</code>、<code class="inline">extensions/memory-core/src/flush-plan.ts</code>、<code class="inline">docs/concepts/memory-qmd.md</code></div>

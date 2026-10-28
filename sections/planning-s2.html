@@ -1,10 +1,61 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">P2</div><h2>别人问：做一个 agent 系统，怎么设计工作流编排</h2></div>
+          <p>按照 OpenClaw 的思路，不要把 agent 系统设计成“一个大 while loop 里随便调工具”。更稳的回答是：<strong>把工作流拆成触发、会话、队列、执行、工具、后台任务、流程状态、交付、观测这几层</strong>。每层职责清楚，系统才可恢复、可审计、可扩展。</p>
+          <div class="callout"><strong>可以直接这样回答：</strong>我会把 agent 工作流编排设计成分层架构：入口层接收消息/定时/webhook；session 层维护上下文和身份；queue 层处理并发；agent loop 层负责推理和工具调用；tool runtime 层执行外部动作；background task 层承接长任务；flow 层记录多步骤状态机；delivery 层把结果送回用户；observability 层负责日志、状态、取消和恢复。</div>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. Trigger layer：先统一入口</h3>
+              <p>消息、CLI、cron、webhook、hook、API 请求都先变成统一的 run request。不要让每个入口自己直接驱动模型，否则后面权限、日志、重试会失控。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. Session layer：上下文必须有归属</h3>
+              <p>每个请求要归到 agent、channel、account、peer/thread、sessionId。这样才能知道该用哪个历史、哪个权限、哪个 workspace、哪个模型配置。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. Queue layer：并发不要靠运气</h3>
+              <p>同一个 session 同时来多条消息时，要明确策略：排队、合并、steer 当前 run、丢弃、或开新 isolated run。否则 agent 会并发写同一份状态。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. Agent loop：只负责决策循环</h3>
+              <p>agent loop 做的事是：读上下文 → 计划 → 调工具 → 消化工具结果 → 继续计划 → 输出。它不应该直接承担长期流程状态机和外部调度。</p>
+            </article>
+            <article class="mini-card">
+              <h3>5. Tool runtime：工具是受控 I/O</h3>
+              <p>文件、浏览器、shell、memory、message、sessions、cron、LLM 子任务都应该是有 schema、有权限、有日志的工具，而不是模型自由拼字符串执行。</p>
+            </article>
+            <article class="mini-card">
+              <h3>6. Task / Flow：长流程要持久化</h3>
+              <p>单个后台工作用 task；多个步骤、分支、等待、审批、重试用 flow。flow 里要保存当前 step、状态、revision、子任务 id，保证进程重启后还能恢复。</p>
+            </article>
+            <article class="mini-card">
+              <h3>7. Approval / policy：高风险动作要设门</h3>
+              <p>发消息、改代码、下单、发邮件、执行危险命令这些动作要有 approval gate 或 standing orders，区分“可以自动做”和“必须问人”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>8. Delivery / observability：结果要可追踪</h3>
+              <p>最终输出、进度、失败原因、任务状态、日志、取消信号都要可查。否则用户只会看到 agent 卡住，不知道卡在哪一步。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>一个通用 agent workflow 架构可以画成：</p>
+          <pre><code>input event
+  -> normalize request
+  -> resolve agent/session/workspace
+  -> enqueue or steer
+  -> build context
+  -> agent loop
+      -> tool calls
+      -> approvals if needed
+      -> background task if long-running
+      -> flow state if multi-step
+  -> persist transcript/task/flow state
+  -> deliver result
+  -> emit logs/status/events</code></pre>
+          <p>如果别人继续问“为什么要这么复杂”，可以回答：</p>
+          <ul>
+            <li><strong>可恢复：</strong>进程重启后，task/flow/session 状态还在。</li>
+            <li><strong>可审计：</strong>知道谁触发、做了什么、调用了什么工具、输出到哪里。</li>
+            <li><strong>可控并发：</strong>同一 session 不会多个 agent run 互相踩状态。</li>
+            <li><strong>可扩展：</strong>新增 channel、tool、cron、hook 不需要重写 agent loop。</li>
+            <li><strong>可治理：</strong>高风险动作能被 approval、policy、standing orders 限制。</li>
+          </ul>
+          <div class="callout">最短答案：按照 OpenClaw 思路，agent 系统的工作流编排核心不是“让模型自己想办法”，而是把模型放进一个有 session、queue、tool schema、task ledger、flow state、approval 和 delivery 的工程化运行时里。</div>
+          <div class="refs">参考：<code class="inline">docs/concepts/messages.md</code>、<code class="inline">docs/concepts/queue.md</code>、<code class="inline">docs/concepts/agent-loop.md</code>、<code class="inline">docs/automation/tasks.md</code>、<code class="inline">docs/automation/taskflow.md</code>、<code class="inline">docs/automation/cron-jobs.md</code>、<code class="inline">docs/automation/hooks.md</code>、<code class="inline">docs/concepts/delegate-architecture.md</code></div>

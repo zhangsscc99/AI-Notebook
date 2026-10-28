@@ -1,10 +1,53 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">34</div><h2>分层记忆和会话怎么记住</h2></div>
+          <p>是的，OpenClaw 实际上是<strong>分层记忆</strong>。但“跨时间”不只是靠时间戳；时间戳主要用于 daily memory、session 生命周期、排序/衰减和维护。真正让它记住会话的是<strong>持久化 session store + JSONL transcript + 可选 session indexing</strong>。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>第 1 层：当前会话上下文</h3>
+              <p>同一个 session 内，OpenClaw 会持续维护当前对话历史。模型不是每轮从零开始；当前 session 的 transcript / recent context 会参与后续 turn。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 2 层：session transcript 落盘</h3>
+              <p>会话会写到 <code class="inline">~/.openclaw/agents/&lt;agentId&gt;/sessions/&lt;sessionId&gt;.jsonl</code>。<code class="inline">sessions.json</code> 记录 session 状态和生命周期时间，比如 <code class="inline">sessionStartedAt</code>、<code class="inline">lastInteractionAt</code>、<code class="inline">updatedAt</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 3 层：durable markdown memory</h3>
+              <p>真正长期、可审计、可编辑的记忆放在 <code class="inline">MEMORY.md</code> 和 <code class="inline">memory/YYYY-MM-DD.md</code>。这里的日期文件名是跨时间组织记忆的一种方式。</p>
+            </article>
+            <article class="mini-card">
+              <h3>第 4 层：session memory search</h3>
+              <p>如果启用 session indexing，OpenClaw 会把历史 transcript 清洗成 User/Assistant 文本，再作为 <code class="inline">source="sessions"</code> 建索引，让 <code class="inline">memory_search</code> 能找以前会话里的内容。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>会话是这样“被记住”的：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">用户消息进入某个 channel，OpenClaw 根据 channel/account/peer/thread 等路由到一个稳定 session。</div>
+            <div class="flow-step" data-step="2">session store 维护 session id、状态、最近交互时间、启动时间。</div>
+            <div class="flow-step" data-step="3">每轮用户/助手消息写入对应 <code class="inline">&lt;sessionId&gt;.jsonl</code> transcript。</div>
+            <div class="flow-step" data-step="4">同一 session 后续 turn 可以继续利用当前 transcript / compaction summary / recent tail。</div>
+            <div class="flow-step" data-step="5">如果启用 session memory search，sync 会扫描 transcript 文件，抽取干净的 User/Assistant 文本，过滤系统包装、heartbeat、cron、silent reply、敏感工具片段等噪音。</div>
+            <div class="flow-step" data-step="6">这些清洗后的 transcript chunks 被写入 memory index，source 标记为 <code class="inline">sessions</code>，之后可以被 <code class="inline">memory_search</code> 找到。</div>
+          </div>
+          <p>builtin session indexing 的配置方向是：</p>
+          <pre><code>{
+  agents: {
+    defaults: {
+      memorySearch: {
+        sources: ["memory", "sessions"]
+      }
+    }
+  },
+  experimental: {
+    sessionMemory: true
+  }
+}</code></pre>
+          <p>QMD 后端的 session indexing 配置方向是：</p>
+          <pre><code>{
+  memory: {
+    backend: "qmd",
+    qmd: {
+      sessions: { enabled: true }
+    }
+  }
+}</code></pre>
+          <div class="callout">关键区别：当前会话靠 session transcript 延续；长期事实靠 Markdown memory 保存；跨会话召回可以靠可选的 session transcript indexing。时间戳帮助排序、生命周期和 daily 文件组织，但不是唯一的“记住机制”。</div>
+          <div class="refs">参考：<code class="inline">docs/concepts/session.md</code>、<code class="inline">docs/concepts/agent.md</code>、<code class="inline">docs/reference/memory-config.md</code>、<code class="inline">docs/concepts/memory-qmd.md</code>、<code class="inline">packages/memory-host-sdk/src/host/session-files.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-sync-ops.ts</code></div>

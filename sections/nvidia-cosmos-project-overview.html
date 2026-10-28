@@ -1,10 +1,90 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">COS1</div><h2>NVIDIA Cosmos 项目概览</h2></div>
+          <p><strong>NVIDIA Cosmos</strong> 是 NVIDIA 面向 <strong>Physical AI</strong> 的世界基础模型（World Foundation Model, WFM）平台。它的目标不是生成普通娱乐视频，而是给机器人、自动驾驶、仿真、具身智能等系统生成或延展<strong>可用于视觉仿真的世界视频</strong>，让开发者更快构造训练、评测和仿真数据。</p>
+          <div class="callout"><strong>一句话：</strong>Cosmos 是“物理 AI 的视频世界模型工具箱”：里面有 diffusion-based Text2World / Video2World、autoregressive Video2World、视频 tokenizer、prompt upsampler、guardrail 安全过滤，以及基于 NeMo 的后训练脚本。它输出的主要是高分辨率世界视频/未来帧，不是像 HY-World 那样直接组合 3DGS/mesh 资产。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 仓库状态要先说明</h3>
+              <p>我 clone 的地址是：</p>
+              <pre><code>/root/cosmos</code></pre>
+              <p>该 GitHub 仓库的 <code class="inline">main</code> 分支现在只有跳转说明：项目已迁移到 <code class="inline">github.com/nvidia-cosmos</code>，旧仓库不再维护。为了读到源码，我按 README 提示切到了 <code class="inline">archived-ces2025</code> 分支。</p>
+              <pre><code>repo: https://github.com/NVIDIA/cosmos.git
+branch: archived-ces2025
+commit: f0679c8</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>2. 它解决什么问题</h3>
+              <p>Cosmos 主要服务 Physical AI：机器人、自动驾驶、仓储、工业场景这些系统需要大量视频世界数据来训练和评测。真实采集昂贵，仿真又经常不够真实，所以 Cosmos 提供可控的世界视频生成能力。</p>
+              <p>例如：给一段机器人仓库视频，模型可以继续生成未来若干帧；给一段驾驶场景视频和文字条件，模型可以生成后续世界变化。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>核心模块：Cosmos 不是一个单模型，而是一组世界模型组件</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Diffusion WFM</h3>
+              <p><code class="inline">cosmos1/models/diffusion</code> 提供 diffusion-based world foundation models，支持 <strong>Text2World</strong> 和 <strong>Video2World</strong>。入口脚本是 <code class="inline">inference/text2world.py</code> 和 <code class="inline">inference/video2world.py</code>。</p>
+              <p>源码里的 <code class="inline">DiffusionText2WorldGenerationPipeline</code> / <code class="inline">DiffusionVideo2WorldGenerationPipeline</code> 会做 prompt guardrail、prompt upsampling、T5 text embedding、diffusion 采样、tokenizer 解码和输出视频安全检查。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Autoregressive WFM</h3>
+              <p><code class="inline">cosmos1/models/autoregressive</code> 提供自回归世界模型，主要用于从图片或短视频上下文继续生成未来视觉世界。README 里列了 Base 和 Video2World 两类模型：4B/12B base，以及 5B/13B Video2World。</p>
+              <p>源码里的 <code class="inline">ARBaseGenerationPipeline</code> 先把输入视频 tokenize 成离散/连续视觉 token，再用 AR model 生成后续 token，最后可走 diffusion decoder 增强画质。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Cosmos Tokenizer</h3>
+              <p><code class="inline">cosmos1/models/tokenizer</code> 是核心底座。它把图片/视频压缩成 continuous latents 或 discrete tokens。README 里明确支持 image/video、continuous/discrete 四类 tokenizer。</p>
+              <p>视频 tokenizer 可做空间 8x 或 16x 压缩、时间 4x 或 8x 压缩。没有 tokenizer，后面的 diffusion / autoregressive 大模型就很难直接在原始像素视频上高效训练和推理。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Guardrail</h3>
+              <p><code class="inline">cosmos1/models/guardrail</code> 提供安全系统，分为 pre-Guard 和 post-Guard。pre-Guard 检查输入 prompt，包括 blocklist 和 Aegis；post-Guard 检查生成视频，包括 Video Content Safety Filter 和 Face Blur Filter。</p>
+              <p>这不是外围文档功能，而是集成在 diffusion 和 autoregressive pipeline 里的实际步骤。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Prompt Upsampler / Text Encoder</h3>
+              <p>Diffusion pipeline 里有 prompt upsampler。Text2World 会把短 prompt 扩写成更丰富的描述；Video2World 会用视觉输入生成/增强 prompt。随后 <code class="inline">CosmosT5TextEncoder</code> 把文本转成条件 embedding。</p>
+              <p>所以 Cosmos 里用了语言模型/视觉语言模型，但它们主要是 prompt 增强和条件构造，不是最终的视频世界生成主干。</p>
+            </article>
+            <article class="mini-card">
+              <h3>NeMo 后训练</h3>
+              <p><code class="inline">cosmos1/models/POST_TRAINING.md</code> 和各模块 <code class="inline">nemo/post_training</code> 目录提供后训练路线，用 NVIDIA NeMo 对 diffusion 或 autoregressive WFM 做下游 Physical AI 场景适配。</p>
+              <p>这说明 Cosmos 不只是 demo 推理仓库，也给了继续训练、领域适配和数据准备的工程入口。</p>
+            </article>
+          </div>
+
+          <h3>Diffusion Text2World / Video2World 的典型流程</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>输入。</strong>Text2World 接收文本 prompt；Video2World 接收图片/视频条件，必要时也接收文本 prompt。</div>
+            <div class="flow-step" data-step="2"><strong>安全检查。</strong><code class="inline">BaseWorldGenerationPipeline</code> 先跑 text guardrail；生成后还会跑 video guardrail。</div>
+            <div class="flow-step" data-step="3"><strong>Prompt upsampling。</strong>短 prompt 会被扩写成更详细的影视级描述；Video2World 的 upsampler 会结合视觉输入生成描述。</div>
+            <div class="flow-step" data-step="4"><strong>文本条件编码。</strong><code class="inline">CosmosT5TextEncoder</code> 把 prompt 编成 embedding，给扩散模型做条件。</div>
+            <div class="flow-step" data-step="5"><strong>世界 latent 生成。</strong><code class="inline">generate_world_from_text()</code> 或 <code class="inline">generate_world_from_video()</code> 在 latent 空间里采样生成视频世界表示。</div>
+            <div class="flow-step" data-step="6"><strong>Tokenizer 解码。</strong><code class="inline">self.model.decode(sample)</code> 把 latent 解码成 <code class="inline">[T,H,W,C]</code> 视频帧。</div>
+            <div class="flow-step" data-step="7"><strong>输出过滤。</strong>post-Guard 对输出视频做安全分类和人脸模糊，安全才返回最终视频。</div>
+          </div>
+
+          <h3>Autoregressive Video2World 的典型流程</h3>
+          <pre><code>输入图片 / 9 帧短视频 / 可选文本 prompt
+  → Cosmos video tokenizer 编码成视觉 token
+  → AR model 根据上下文 token 预测未来 token
+  → diffusion decoder 可选增强生成结果
+  → tokenizer / decoder 还原为视频帧
+  → video guardrail 安全过滤
+  → 输出未来世界视频</code></pre>
+          <p>这条线更接近“给世界一个开头，让模型继续往后推演”。源码中 <code class="inline">generate_partial_tokens_from_data_batch()</code> 负责从输入上下文生成后续 token；<code class="inline">diffusion_decoder_process_tokens()</code> 负责把 AR token 结果进一步增强成更高质量的视频。</p>
+
+          <h3>和 HY-World 2.0 的关键区别</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Cosmos 更像视频世界基础模型</h3>
+              <p>它重点输出视频世界：Text2World、Video2World、未来帧延展、物理 AI 仿真视频。核心表示是视频 latent / visual token / generated frames。</p>
+            </article>
+            <article class="mini-card">
+              <h3>HY-World 更像 3D 世界资产 pipeline</h3>
+              <p>HY-World 2.0 会把全景、轨迹、新视角、深度、法线、相机、3DGS/mesh 串成可导航的 3D 资产。Cosmos 公开源码重点不是 3DGS/mesh 组合，而是世界视频生成模型。</p>
+            </article>
+          </div>
+
+          <div class="callout">最短总结：<strong>NVIDIA Cosmos 是面向机器人/自动驾驶等 Physical AI 的世界视频基础模型平台。</strong>它的工程核心是：视频 tokenizer 降低建模成本，diffusion 和 autoregressive 两条生成路线负责世界视频生成，prompt upsampler/T5 提供语言条件，guardrail 管安全，NeMo 支持后训练。</div>
+          <div class="refs">本地源码：<code class="inline">/root/cosmos</code>，分支 <code class="inline">archived-ces2025</code>，commit <code class="inline">f0679c8</code>。参考文件：<code class="inline">README.md</code>、<code class="inline">INSTALL.md</code>、<code class="inline">cosmos1/models/diffusion/README.md</code>、<code class="inline">cosmos1/models/diffusion/inference/world_generation_pipeline.py:56-645</code>、<code class="inline">cosmos1/models/autoregressive/README.md</code>、<code class="inline">cosmos1/models/autoregressive/inference/world_generation_pipeline.py:138-910</code>、<code class="inline">cosmos1/models/tokenizer/README.md</code>、<code class="inline">cosmos1/models/guardrail/README.md</code>、<code class="inline">cosmos1/models/common/base_world_generation_pipeline.py</code>。</div>

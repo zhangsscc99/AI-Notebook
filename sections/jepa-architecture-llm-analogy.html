@@ -1,10 +1,63 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">JEPA2</div><h2>EB-JEPA 架构图：组件解释与 LLM 类比</h2></div>
+          <p>这个问题重点不是泛泛说“JEPA 是世界模型”，而是把 EB-JEPA 的每个组件摆出来，并和 LLM 的组件做一一类比。对应说明也写在 <code class="inline">/root/eb_jepa/JEPA_ARCHITECTURE_QUESTION.md</code>，架构图文件写在 <code class="inline">/root/eb_jepa/docs/jepa-architecture-llm-analogy.svg</code>。</p>
+          <div class="callout"><strong>一句话：</strong>LLM 学的是“文本上下文 → 下一个 token 分布”；EB-JEPA 学的是“当前观测 latent + 动作 → 未来世界 latent”。所以 LLM 的输出是 token logits，JEPA 的输出是未来状态 representation，planning 时再用 energy/cost 搜索动作。</div>
+
+          <div style="margin:20px 0; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:22px; background:#0a0f15;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" style="display:block; min-width:900px; width:100%; height:auto;">
+              <defs>
+                <linearGradient id="jepaBg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#0b1016"/><stop offset="1" stop-color="#111b26"/></linearGradient>
+                <style>.jt{font:700 34px Georgia,serif;fill:#eef3f7}.js{font:16px sans-serif;fill:#a9b8c4}.jb{fill:#121922;stroke:#31404f;stroke-width:2}.jb2{fill:#172230;stroke:#41576a;stroke-width:2}.jl{font:700 20px sans-serif;fill:#f6deb0}.jx{font:15px sans-serif;fill:#d4dde5}.jm{font:13px sans-serif;fill:#9aabb8}.ja{stroke:#e7c98b;stroke-width:3;marker-end:url(#jepaArrow)}.jblue{stroke:#8ad2d8}.jdash{stroke-dasharray:8 6}.jp{fill:#1d2b3a;stroke:#e7c98b;stroke-width:1.5}</style>
+                <marker id="jepaArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#e7c98b"/></marker>
+              </defs>
+              <rect width="1280" height="760" fill="url(#jepaBg)"/>
+              <text x="48" y="58" class="jt">EB-JEPA Architecture vs LLM Analogy</text><text x="48" y="88" class="js">JEPA predicts future latent world states; LLM predicts next discrete tokens.</text>
+              <text x="70" y="140" class="jl">JEPA / World Model Path</text>
+              <rect x="70" y="165" rx="18" width="190" height="90" class="jb"/><text x="92" y="200" class="jl">Observation</text><text x="92" y="226" class="jx">image / video</text><text x="92" y="246" class="jm">x_t, x_{t+1}</text>
+              <line x1="260" y1="210" x2="330" y2="210" class="ja"/><rect x="330" y="165" rx="18" width="190" height="90" class="jb"/><text x="358" y="200" class="jl">Encoder</text><text x="358" y="226" class="jx">visual state</text><text x="358" y="246" class="jm">z_t = f(x_t)</text>
+              <line x1="520" y1="210" x2="590" y2="210" class="ja"/><rect x="590" y="165" rx="18" width="190" height="90" class="jb"/><text x="618" y="200" class="jl">Predictor</text><text x="618" y="226" class="jx">latent dynamics</text><text x="618" y="246" class="jm">ẑ_{t+1}=g(z_t,a_t)</text>
+              <line x1="780" y1="210" x2="850" y2="210" class="ja"/><rect x="850" y="165" rx="18" width="200" height="90" class="jb"/><text x="882" y="200" class="jl">Future Latent</text><text x="882" y="226" class="jx">predicted state</text><text x="882" y="246" class="jm">not pixels, not words</text>
+              <rect x="590" y="300" rx="18" width="190" height="90" class="jb2"/><text x="616" y="335" class="jl">Action Encoder</text><text x="616" y="361" class="jx">action condition</text><text x="616" y="381" class="jm">a_t → e(a_t)</text><line x1="685" y1="300" x2="685" y2="255" class="ja jblue"/>
+              <rect x="850" y="300" rx="18" width="200" height="90" class="jb2"/><text x="880" y="335" class="jl">Target Latent</text><text x="880" y="361" class="jx">encoder(x future)</text><text x="880" y="381" class="jm">training signal</text><line x1="950" y1="300" x2="950" y2="255" class="ja jblue jdash"/>
+              <rect x="1080" y="165" rx="18" width="190" height="90" class="jp"/><text x="1106" y="200" class="jl">Loss / Energy</text><text x="1106" y="226" class="jx">prediction cost</text><text x="1106" y="246" class="jm">+ anti-collapse reg</text><line x1="1050" y1="210" x2="1080" y2="210" class="ja"/><line x1="950" y1="300" x2="1080" y2="235" class="ja jblue jdash"/>
+              <rect x="330" y="430" rx="18" width="720" height="90" class="jb2"/><text x="360" y="466" class="jl">Planning: CEM / MPPI</text><text x="360" y="494" class="jx">sample action sequences → unroll JEPA in latent space → choose low-energy path toward goal latent</text>
+              <text x="70" y="590" class="jl">LLM Analogy</text>
+              <rect x="70" y="615" rx="18" width="180" height="70" class="jb"/><text x="96" y="646" class="jl">Text Tokens</text><text x="96" y="670" class="jm">prompt ids</text><line x1="250" y1="650" x2="320" y2="650" class="ja"/>
+              <rect x="320" y="615" rx="18" width="190" height="70" class="jb"/><text x="352" y="646" class="jl">Embedding</text><text x="352" y="670" class="jm">token + position</text><line x1="510" y1="650" x2="580" y2="650" class="ja"/>
+              <rect x="580" y="615" rx="18" width="190" height="70" class="jb"/><text x="610" y="646" class="jl">Transformer</text><text x="610" y="670" class="jm">context dynamics</text><line x1="770" y1="650" x2="840" y2="650" class="ja"/>
+              <rect x="840" y="615" rx="18" width="190" height="70" class="jb"/><text x="882" y="646" class="jl">LM Head</text><text x="882" y="670" class="jm">vocab logits</text><line x1="1030" y1="650" x2="1100" y2="650" class="ja"/>
+              <rect x="1100" y="615" rx="18" width="180" height="70" class="jp"/><text x="1130" y="646" class="jl">Next Token</text><text x="1130" y="670" class="jm">sample/decode</text>
+            </svg>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>1. EB-JEPA 的组件各自做什么</h3>
+          <div class="grid-2">
+            <article class="mini-card"><h3>Observation</h3><p>输入不是文本，而是图像、视频帧、环境状态序列。在源码里常见形状是 <code class="inline">[B, C, T, H, W]</code>。</p></article>
+            <article class="mini-card"><h3>Encoder</h3><p>把原始观测编码成 latent state。例子包括 <code class="inline">ResNet5</code>、<code class="inline">ImpalaEncoder</code>。它相当于把世界压缩成可预测的状态表示。</p></article>
+            <article class="mini-card"><h3>Action Encoder</h3><p>把动作变成 predictor 能使用的条件。在 action-conditioned JEPA 里，动作决定 latent 状态如何演化；有些实验里它就是 <code class="inline">nn.Identity()</code>。</p></article>
+            <article class="mini-card"><h3>Predictor</h3><p>动力学模型。输入当前/上下文 latent 和动作，输出未来 latent。源码里有 <code class="inline">ResUNet</code>、<code class="inline">RNNPredictor</code> 等路线。</p></article>
+            <article class="mini-card"><h3>Target Latent</h3><p>未来真实观测经过 encoder 得到的表示。JEPA 不直接预测未来像素，而是让预测 latent 接近这个 target latent。</p></article>
+            <article class="mini-card"><h3>Prediction Cost / Energy</h3><p>预测 latent 和目标 latent 的距离，例如 <code class="inline">SquareLossSeq</code>。Planning 时，这个距离也可以理解成候选动作轨迹的 energy/cost。</p></article>
+            <article class="mini-card"><h3>Regularizer</h3><p>防止 encoder 把所有输入编码成同一个向量。源码里的 <code class="inline">VCLoss</code>、<code class="inline">VC_IDM_Sim_Regularizer</code> 用 variance、covariance、temporal similarity、inverse dynamics 约束表示。</p></article>
+            <article class="mini-card"><h3>Planner</h3><p>在 <code class="inline">planning.py</code> 中，CEM/MPPI 采样动作序列，用 JEPA unroll 预测未来 latent，选择最接近 goal latent 的动作。</p></article>
+          </div>
+
+          <h3>2. 和 LLM 组件一一类比</h3>
+          <pre><code>LLM:
+text tokens -> token embeddings -> Transformer -> vocab logits -> next token
+训练目标：cross entropy(next_token)
+
+EB-JEPA:
+image/video state -> encoder latent -> predictor dynamics -> future latent
+训练目标：distance(predicted_latent, target_latent) + anti-collapse regularizer</code></pre>
+          <div class="grid-2">
+            <article class="mini-card"><h3>输入层类比</h3><p>LLM 的输入是 token ids；JEPA 的输入是连续感知观测。token id 是离散符号，图像/视频是高维连续信号。</p></article>
+            <article class="mini-card"><h3>表示层类比</h3><p>LLM 的 embedding/Transformer hidden states 表示语言上下文；JEPA 的 encoder latent 表示世界状态。二者都是“把原始输入变成内部表征”。</p></article>
+            <article class="mini-card"><h3>预测头类比</h3><p>LLM head 输出 vocab logits；JEPA predictor 输出未来 latent。一个预测符号概率，一个预测世界状态的表示。</p></article>
+            <article class="mini-card"><h3>解码/规划类比</h3><p>LLM 用 sampling/beam/search 选 token 序列；JEPA 用 CEM/MPPI 搜索动作序列。LLM 解码语言，JEPA 规划行动。</p></article>
+          </div>
+
+          <h3>3. 最重要的差异</h3>
+          <p>LLM 的 next-token loss 天然有离散 label，模型很难靠“所有输入都变成同一个表示”来过关；但 JEPA 只在 embedding 空间做预测，如果没有 regularizer，encoder 可能把所有观测都压成常量，prediction loss 仍然很低。这就是 JEPA 为什么必须强调防坍塌。</p>
+          <p>另一个差异是输出的用途：LLM 输出文本或工具调用，主要服务语义推理与任务编排；JEPA 输出未来 latent，主要服务状态预测和动作规划。更好的系统可能把两者结合：LLM 做高层任务分解，JEPA 做低层视觉/物理世界模型。</p>
+
+          <div class="refs">参考源码/文档：<code class="inline">/root/eb_jepa/eb_jepa/jepa.py</code>、<code class="inline">/root/eb_jepa/eb_jepa/architectures.py</code>、<code class="inline">/root/eb_jepa/eb_jepa/losses.py</code>、<code class="inline">/root/eb_jepa/eb_jepa/planning.py</code>、<code class="inline">/root/eb_jepa/JEPA_ARCHITECTURE_QUESTION.md</code>。</div>

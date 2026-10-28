@@ -1,10 +1,84 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">HY3D11</div><h2>3D Mesh → 点云 → VAE latent → Flow Matching DiT → Mesh 这个训练思路是否准确</h2></div>
+          <p>你给的三段话总体方向是对的，但要补两个关键修正：<strong>第一，混元3D 的公开训练链路里，DiT 训练数据不只是 3D latent，还必须配 2D 渲染条件图；第二，源码里 DiT 训练不是直接从磁盘读取预先保存好的 latent 特征集，而是从 surface 点云现场用冻结 ShapeVAE encode 成 latent。</strong></p>
+          <div class="callout"><strong>结论：</strong>“3D Mesh → 采样点云 → VAE 编码 → Latent → Flow Matching DiT → 新 Latent → VAE/geo decoder/SDF logits → Mesh”这个理解 <strong>80% 准确</strong>。更准确说法是：<strong>数据制备保存的是 render 条件图 + surface/SDF 采样；VAE 先被训练成点云/SDF 到 latent/mesh 的 autoencoder；DiT 训练时用冻结 VAE 在线编码 surface 得到 latent，并学习图片条件下的 latent 空间 velocity。</strong></div>
+
+          <h3>1. 数据制备：不是只做 latent，也会做渲染条件图和 SDF 数据</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>原始 3D 资产。</strong><code class="inline">tools/pipeline.sh</code> 以 <code class="inline">dataset/raw/uuid.glb</code> 为输入。</div>
+            <div class="flow-step" data-step="2"><strong>Blender 渲染。</strong><code class="inline">render/render.py --geo_mode</code> 会把复杂 3D 格式转成 PLY，并渲染 <code class="inline">render_cond/000.png ... 023.png</code> 这类条件图。DiT 是 image-conditioned shape generation，所以这些图不是可选边角料。</div>
+            <div class="flow-step" data-step="3"><strong>watertight + surface sampling。</strong><code class="inline">watertight_and_sample.py</code> 对 mesh 做归一化、watertight 处理，然后采样 <code class="inline">random_surface</code> 和 <code class="inline">sharp_surface</code>，每个点包含 <code class="inline">XYZ + normal</code>。</div>
+            <div class="flow-step" data-step="4"><strong>SDF 采样。</strong>同一个脚本还会生成 <code class="inline">*_sdf.npz</code>，里面有 volume points、near-surface points、sharp-near points 以及 SDF label。这主要服务 VAE/几何 decoder 训练，不是 DiT 每一步都直接读取的主输入。</div>
+            <div class="flow-step" data-step="5"><strong>DiT 数据集读取。</strong><code class="inline">AlignedShapeLatentDataset.decode()</code> 实际读取 <code class="inline">render_cond/*.png</code> 和 <code class="inline">geo_data/{uid}_surface.npz</code>，再在 <code class="inline">transform()</code> 里随机选一张渲染图，抽取 surface 点云。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <pre><code>公开数据目录更准确是：
+uid/
+  render_cond/000.png ... 023.png      # 图片条件，训练 image-conditioned DiT
+  render_cond/mesh.ply                 # Blender 转出的几何
+  geo_data/{uid}_surface.npz           # random_surface / sharp_surface，XYZ+normal
+  geo_data/{uid}_sdf.npz               # VAE 几何 decoder 训练用的 SDF samples
+  geo_data/{uid}_watertight.obj        # watertight mesh</code></pre>
+
+          <h3>2. VAE 编码：训练 DiT 时源码是“在线编码”，不是读取已保存 latent</h3>
+          <p>这里是最容易误解的点。配置文件虽然叫 <code class="inline">AlignedShapeLatentModule</code>，但 <code class="inline">dit_asl.py</code> 读取的是 surface 点云和 image。真正生成 latent 的地方在 <code class="inline">flow_matching_sit.py</code>：</p>
+          <pre><code>// hy3dshape/models/diffusion/flow_matching_sit.py，简化
+contexts = cond_stage_model(image=batch.get('image'), mask=batch.get('mask'))
+
+with torch.no_grad():
+    latents = first_stage_model.encode(batch['surface'], sample_posterior=True)
+    latents = z_scale_factor * latents
+
+loss = transport.training_losses(model, latents, dict(contexts=contexts))["loss"].mean()</code></pre>
+          <p>所以，“VAE 编码 → Latent 特征集”作为<strong>概念流程</strong>没问题；但按公开源码实现，latent 并没有作为 <code class="inline">.npz</code> 训练集主文件预先落盘，而是在训练 forward 里由冻结 VAE 对 surface 点云编码得到。工业训练为了省算力当然可能预缓存 latent，但这不是当前公开代码展示的路径。</p>
+
+          <h3>3. 模型训练：是基于 latent 训练 Flow Matching DiT，但条件是图片</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>训练目标是什么</h3>
+              <p>配置里写 <code class="inline">path_type: Linear</code>、<code class="inline">prediction: velocity</code>。<code class="inline">Transport.training_losses()</code> 先采样噪声 <code class="inline">x0</code>、真实 latent <code class="inline">x1</code> 和时间 <code class="inline">t</code>，再构造 <code class="inline">xt</code> 和目标速度 <code class="inline">ut</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>DiT 学什么</h3>
+              <p>DiT 输入当前 noisy latent <code class="inline">xt</code>、时间 <code class="inline">t</code>、图片条件 <code class="inline">contexts</code>，输出与 latent 同形状的 velocity。loss 是 <code class="inline">MSE(model_output, ut)</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>为什么不是训练 VAE</h3>
+              <p>这个 DiT 配置里 <code class="inline">first_stage_config</code> 从 <code class="inline">tencent/Hunyuan3D-2.1</code> 加载 ShapeVAE，并通过 <code class="inline">instantiate_non_trainable_model()</code> 创建非训练模型。也就是说 DiT 训练阶段默认不更新 VAE。</p>
+            </article>
+            <article class="mini-card">
+              <h3>SDF 在哪里用</h3>
+              <p>SDF 数据更对应 VAE / geo decoder 学“点在物体内外/到表面的符号距离”的阶段。DiT 训练阶段公开代码主要用 <code class="inline">surface</code> 经 VAE encode 得到 latent，并不在 <code class="inline">AlignedShapeLatentDataset</code> 里读取 <code class="inline">*_sdf.npz</code>。</p>
+            </article>
+          </div>
+
+          <pre><code>// hy3dshape/models/diffusion/transport/transport.py，简化
+x0 = randn_like(x1)              // 噪声 latent
+t  = random time
+xt = t * x1 + (1 - t) * x0       // linear path
+ut = x1 - x0                     // velocity target
+model_output = DiT(xt, t, contexts=image_features)
+loss = mean((model_output - ut) ** 2)</code></pre>
+
+          <h3>4. 模型产出：不是“VAE 直接解码 SDF”，而是 VAE decoder + geo decoder 查询出 3D 标量场</h3>
+          <p>你说“噪声生成新 Latent → VAE 解码 SDF → 转换成可用 Mesh”方向对，但源码层面更细：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>推理从噪声 latent 开始。</strong><code class="inline">prepare_latents()</code> 生成形状为 <code class="inline">vae.latent_shape</code> 的随机 latent。</div>
+            <div class="flow-step" data-step="2"><strong>Flow Matching Euler 更新。</strong>每步 <code class="inline">noise_pred = model(latent_model_input, timestep, cond)</code>，再 <code class="inline">scheduler.step()</code> 得到 <code class="inline">prev_sample</code>。</div>
+            <div class="flow-step" data-step="3"><strong>VAE decode latent tokens。</strong><code class="inline">_export()</code> 里反缩放后调用 <code class="inline">self.vae(latents)</code>，即 <code class="inline">ShapeVAE.forward()</code> 的 <code class="inline">post_kl + transformer</code>。</div>
+            <div class="flow-step" data-step="4"><strong>geo decoder 查询网格点。</strong><code class="inline">latents2mesh()</code> 调用 <code class="inline">volume_decoder(latents, geo_decoder)</code>。volume decoder 在 3D 空间采样 dense grid points，分块查询 geo_decoder，得到 <code class="inline">grid_logits</code>。这些 logits 可以理解成 SDF/occupancy-like 标量场。</div>
+            <div class="flow-step" data-step="5"><strong>抽 mesh。</strong><code class="inline">surface_extractor</code> 用 marching cubes / DMC 从 <code class="inline">grid_logits</code> 抽出 vertices/faces，再包装成 trimesh/GLB。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>你的表述哪里准确</h3>
+              <p><strong>Mesh → 点云 → VAE latent → DiT latent 生成 → VAE/几何解码 → Mesh</strong>这个主干是对的。它抓住了混元3D最重要的点：生成模型不是直接生成三角面，而是在 VAE 的 3D latent 空间里生成。</p>
+            </article>
+            <article class="mini-card">
+              <h3>你的表述哪里要改</h3>
+              <p>要把“Latent 特征集”改成“训练时由冻结 VAE 在线编码得到 latent”；把“基于 Latent 数据训练”补成“基于 <strong>image 条件 + VAE latent</strong> 训练”；把“VAE 解码 SDF”改成“VAE decoder 产生 latent tokens，geo decoder 对网格点输出 SDF/occupancy-like logits，再 marching cubes 成 mesh”。</p>
+            </article>
+          </div>
+
+          <div class="callout">最终更严谨版本：<strong>3D Mesh → Blender 渲染条件图 + watertight 处理 → surface/SDF 采样；VAE 先学习 surface/SDF 到 3D latent/implicit field 的 autoencoding；DiT 训练时冻结 VAE，把 surface 在线编码成 clean latent，以图片为条件学习 flow matching velocity；推理时从噪声 latent 采样出新 latent，再经 VAE/geo decoder 变成 3D 标量场，最后 marching cubes/DMC 得到 mesh。</strong></div>
+          <div class="refs">参考源码：<code class="inline">/root/Hunyuan3D-2.1</code> commit <code class="inline">82920d6</code>；<code class="inline">hy3dshape/tools/README.md:32-82</code>、<code class="inline">hy3dshape/tools/pipeline.sh:8-10</code>、<code class="inline">hy3dshape/tools/watertight/watertight_and_sample.py:62-157</code>、<code class="inline">hy3dshape/tools/watertight/watertight_and_sample.py:211-223</code>、<code class="inline">hy3dshape/configs/hunyuandit-finetuning-flowmatching-dinol518-bf16-lr1e5-4096.yaml:16-88</code>、<code class="inline">hy3dshape/hy3dshape/data/dit_asl.py:178-208</code>、<code class="inline">hy3dshape/hy3dshape/data/dit_asl.py:247-272</code>、<code class="inline">hy3dshape/hy3dshape/models/diffusion/flow_matching_sit.py:256-289</code>、<code class="inline">hy3dshape/hy3dshape/models/diffusion/transport/transport.py:158-183</code>、<code class="inline">hy3dshape/hy3dshape/models/diffusion/transport/path.py:139-162</code>、<code class="inline">hy3dshape/hy3dshape/models/autoencoders/model.py:211-215</code>、<code class="inline">hy3dshape/hy3dshape/models/autoencoders/model.py:319-339</code>、<code class="inline">hy3dshape/minimal_vae_demo.py:29-50</code>。</div>

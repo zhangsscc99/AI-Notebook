@@ -1,10 +1,10 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">C3</div><h2>query()：模型-工具循环怎么跑</h2></div>
+          <p><code class="inline">src/query.ts</code> 是真正的 agent loop。它不是简单“问一次模型就结束”，而是一个 <code class="inline">while (true)</code> 循环：每轮先整理上下文，再调用模型流式输出；如果输出包含 tool_use，就执行工具，把 tool_result 作为 user message 放回上下文，然后继续下一轮。</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1">从上次 compact boundary 后取消息，应用 tool result budget、snip、microcompact、context collapse、auto compact。</div>
+            <div class="flow-step" data-step="2">拼接 system prompt、user context、system context，选择当前模型和 fallback model。</div>
+            <div class="flow-step" data-step="3">调用 <code class="inline">deps.callModel()</code> 流式收 assistant 消息；发现 tool_use block 时记录到 <code class="inline">toolUseBlocks</code>。</div>
+            <div class="flow-step" data-step="4">如果没有 tool_use，执行 stop hooks、token budget continuation 判断，然后返回 completed。</div>
+            <div class="flow-step" data-step="5">如果有 tool_use，交给工具编排层执行；工具结果归一化为 user tool_result，追加回下一轮模型上下文。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <div class="callout">这就是 Claude Code 的基本“工作流”：模型不是直接改文件，而是反复产生 tool_use，客户端验证权限并执行工具，再把结果喂回模型，直到模型不再请求工具。</div>

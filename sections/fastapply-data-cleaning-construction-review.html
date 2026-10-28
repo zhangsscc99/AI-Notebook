@@ -1,10 +1,91 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">26</div><h2>FastApply 数据怎么洗、怎么构建：再完整回答一遍</h2></div>
+          <p>这套数据不是“随便拿一段代码让模型改”。FastApply / GRPO 数据构建的核心目标是：<strong>从真实代码变更里构造 old_source + patch + new_source 三元组，再把它变成可验证的 prompt / ground truth</strong>。清洗的核心目标是：只留下可重放、可解析、长度合适、非重复、适合训练“应用补丁”的样本。</p>
+          <div class="callout"><strong>一句话：</strong>数据构建 = 从 Git commit 抽 old/new/diff → 解析 diff hunks → 生成 SEARCH/REPLACE patch → 得到 update/new_source → 转成 GRPO prompt；数据清洗 = 过滤无效语言、空内容、超长样本、diff 不可重放、语法错误、非功能性修改、重复/近重复。</div>
+
+          <p>完整 pipeline 可以按这个顺序讲：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>抽原始样本。</strong><code class="inline">build/extract.py</code> 遍历 Git repo 的 single-parent commits，针对源码文件取 <code class="inline">commit^:path</code> 作为 old_source，取 <code class="inline">commit:path</code> 作为 new_source，再保存 unified diff。</div>
+            <div class="flow-step" data-step="2"><strong>语言和文件过滤。</strong>只保留 .py / .java / .js / .ts / .go / .rs / .c / .cpp 等源码扩展名；无法 detect_language 的文件直接跳过。</div>
+            <div class="flow-step" data-step="3"><strong>解析 diff。</strong><code class="inline">build/parse.py</code> 按 <code class="inline">@@ -a,b +c,d @@</code> 拆 hunks，把每个 hunk 分成 old SEARCH 片段和 new REPLACE 片段。</div>
+            <div class="flow-step" data-step="4"><strong>构造 patch。</strong><code class="inline">build/make.py</code> 把 changes 组装成 <code class="inline">&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH ... ======= ... &gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code> 的补丁格式；如果已有 new_source，就用确定性路径直接作为 update。</div>
+            <div class="flow-step" data-step="5"><strong>规则清洗。</strong><code class="inline">build/filter.py</code> / <code class="inline">generate.py</code> 检查 AST、修改范围、import / functional modification、hunk 数量、长度等。</div>
+            <div class="flow-step" data-step="6"><strong>去重。</strong><code class="inline">deduplicate.py</code> 对 update/new_source 做 normalize signature；大规模版本应该替换成 AST-normalized MinHash + LSH 近重复过滤。</div>
+            <div class="flow-step" data-step="7"><strong>转训练格式。</strong><code class="inline">convert.py</code> 生成 <code class="inline">data_source=apply</code>、prompt、ability、reward_model.ground_truth、extra_info、response。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>原始数据长什么样</h3>
+              <pre><code>{
+  "id": "...",
+  "repo": "xxx",
+  "file": "src/a.py",
+  "commit": "abc123",
+  "language": "python",
+  "old_source": "旧文件完整内容",
+  "new_source": "新文件完整内容",
+  "diff": "git diff 输出"
+}</code></pre>
+              <p>这一步还不是训练数据，只是从真实 commit 抽出来的可追溯原料。</p>
+            </article>
+            <article class="mini-card">
+              <h3>训练 prompt 长什么样</h3>
+              <pre><code>Please apply all changes from &lt;patch&gt; to &lt;source&gt;.
+- Preserve code structure...
+- Output only the updated source code within &lt;updated&gt; tags.
+
+&lt;language&gt;python&lt;/language&gt;
+&lt;source&gt;旧代码&lt;/source&gt;
+&lt;patch&gt;SEARCH/REPLACE patch&lt;/patch&gt;</code></pre>
+              <p>ground truth 是 <code class="inline">new_source</code>，response 模板是 <code class="inline">&lt;updated&gt;...&lt;/updated&gt;</code>。</p>
+            </article>
+          </div>
+
+          <p>清洗到底清什么？</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>1. 基础有效性</h3>
+              <p>过滤 old_source / new_source / diff 为空的样本；过滤非源码后缀；过滤 language 不在支持列表的样本；过滤 old_source == new_source 的无变化样本。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 长度控制</h3>
+              <p>小复刻版用字符阈值；RL-master 版用近似 token：<code class="inline">len(text)/4 + 1</code>，默认不超过 <code class="inline">max_seq_len=32768</code>。太长会导致训练成本高、截断、reward 无法可靠判断。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. patch 可重放</h3>
+              <p><code class="inline">fastapply_pipeline/filters.py</code> 会把 patch 应用到 old_source，要求结果 normalize 后等于 new_source。不能重放的样本说明 patch / old / new 三者不一致，必须丢。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. 语法 / AST 可解析</h3>
+              <p>对 new_source 做语言解析。Python 用 AST，其他语言可走对应 checker。语法坏的样本会让模型学到不可运行输出，也会干扰 reward。</p>
+            </article>
+            <article class="mini-card">
+              <h3>5. 修改类型过滤</h3>
+              <p>RL-master 的 filter 会把 diff hunk 映射到 AST Unit，要求至少有 functional modification；可选要求 import modification；可选只允许 function/class/statement 这类功能性范围。</p>
+            </article>
+            <article class="mini-card">
+              <h3>6. 去重 / 近重复</h3>
+              <p>小复刻版用 normalize 后 hash；更完整方案应该用 AST-normalized MinHash + LSH。目的不是只去完全重复，而是去掉变量名不同但结构几乎一样的近重复。</p>
+            </article>
+          </div>
+
+          <p>最后构建出来的 GRPO 行大概是：</p>
+          <pre><code>{
+  "data_source": "apply",
+  "prompt": "...old source + patch...",
+  "ability": "fast_apply",
+  "reward_model": {
+    "style": "rule",
+    "ground_truth": "new_source / update"
+  },
+  "extra_info": {
+    "id": "...",
+    "repo": "...",
+    "file": "...",
+    "language": "python"
+  },
+  "response": "&lt;updated&gt;\n...new source...\n&lt;/updated&gt;"
+}</code></pre>
+
+          <div class="callout">最容易讲给别人听的版本：<strong>FastApply 数据构建是在真实 commit 里挖“旧代码 + 变更补丁 → 新代码”的监督/强化样本；数据清洗是在确保这个样本可重放、可解析、不过长、不是重复题、reward 能判。</strong>清洗越严格，训练越不会学到脏格式、无效补丁和投机输出。</div>
+          <div class="refs">参考：<code class="inline">/root/rlhf/fastapply_pipeline/build_dataset.py</code>、<code class="inline">filters.py</code>、<code class="inline">templates.py</code>、<code class="inline">/root/rlhf/rl_master/applications/fastapply/build/extract.py</code>、<code class="inline">parse.py</code>、<code class="inline">filter.py</code>、<code class="inline">make.py</code>、<code class="inline">generate.py</code>、<code class="inline">deduplicate.py</code>、<code class="inline">convert.py</code>、<code class="inline">tests/test_fastapply_data_cleaning.py</code></div>

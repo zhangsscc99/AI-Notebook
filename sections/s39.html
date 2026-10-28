@@ -1,10 +1,44 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">39</div><h2>OpenClaw 的 session transcript 到底何时被索引</h2></div>
+          <p>先把结论说清楚：<strong>session transcript 不是每发一条消息就立刻被索引</strong>。OpenClaw 先把会话写进本地 JSONL transcript；只有在 session memory 被启用、并且触发 sync 条件后，才会把 transcript 转成可检索文本，再写入 memory index。</p>
+          <div class="callout"><strong>核心判断：</strong>builtin backend 里最终由 <code class="inline">shouldSyncSessionsForReindex()</code> 决定本轮 sync 是否处理 <code class="inline">source="sessions"</code>。如果没有启用 sessions source，直接不索引 transcript。</div>
+
+          <div class="flow">
+            <div class="flow-step"><span>1</span><strong>消息落盘</strong><br/>用户/助手消息先追加到 session JSONL transcript。它是原始会话日志，不是 Markdown 记忆。</div>
+            <div class="flow-step"><span>2</span><strong>事件聚合</strong><br/><code class="inline">onSessionTranscriptUpdate</code> 触发后进入 <code class="inline">sessionPendingFiles</code>，默认等 5 秒 debounce。</div>
+            <div class="flow-step"><span>3</span><strong>阈值判断</strong><br/>检查累计新增 bytes / messages 是否达到 <code class="inline">sync.sessions.deltaBytes</code> 或 <code class="inline">deltaMessages</code>。</div>
+            <div class="flow-step"><span>4</span><strong>sync</strong><br/>达到阈值后标记 <code class="inline">sessionsDirty</code>，调用 <code class="inline">sync({ reason: "session-delta" })</code>。</div>
+            <div class="flow-step"><span>5</span><strong>构建索引文本</strong><br/><code class="inline">buildSessionEntry()</code> 解析 JSONL，只保留 user/assistant 可检索文本。</div>
+            <div class="flow-step"><span>6</span><strong>写入索引</strong><br/>调用 <code class="inline">indexFile(entry, { source: "sessions" })</code>，进入 FTS / vector / hybrid 索引。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>什么时候会索引 transcript</h3>
+              <p><strong>第一类：首次搜索兜底。</strong>如果第一次 <code class="inline">memory_search</code> 时索引为空，search 会触发 <code class="inline">sync({ reason: "search", force: true })</code>。force 会让 sessions 进入本轮 sync，前提是 sources 包含 <code class="inline">sessions</code>。</p>
+              <p><strong>第二类：session 增量变化。</strong>transcript 被追加后，不是马上建索引，而是 5 秒 debounce，再看 deltaBytes / deltaMessages 阈值，达标才 <code class="inline">session-delta</code> sync。</p>
+              <p><strong>第三类：全量重建。</strong>配置 sources、embedding provider、chunk 参数、FTS/vector 状态等变化导致 full reindex 时，sessions 会一起重建。</p>
+              <p><strong>第四类：定向 session sync。</strong>builtin backend 如果收到 <code class="inline">sessionFiles</code> 参数，会只刷新目标 transcript，而不是扫描所有 session。</p>
+            </article>
+            <article class="mini-card">
+              <h3>什么时候不会普通索引 transcript</h3>
+              <p><strong>不是每轮对话后立即索引。</strong>源码用 debounce + 阈值控制成本，否则长对话每条消息都 reindex 会很重。</p>
+              <p><strong><code class="inline">watch</code> 不负责 transcript。</strong>文件 watcher 主要盯 <code class="inline">MEMORY.md</code>、<code class="inline">memory/</code>、extraPaths；<code class="inline">reason="watch"</code> 被明确排除 session sync。</p>
+              <p><strong><code class="inline">session-start</code> 也不是普通 transcript 建索引。</strong>它更多是预热入口；在 builtin 判断里，除非 force / full reindex / 定向 sessionFiles，否则 <code class="inline">session-start</code> 不会处理 sessions。</p>
+              <p><strong>没有开启 sessions source 就完全不会走。</strong>配置层需要启用 session memory，并把 <code class="inline">sources</code> 加上 <code class="inline">"sessions"</code>。</p>
+            </article>
+          </div>
+
+          <div class="callout"><strong>QMD backend 的时机单独记：</strong>如果使用 <code class="inline">memory.backend="qmd"</code> 且 <code class="inline">memory.qmd.sessions.enabled=true</code>，transcript 会在 QMD 的 boot / interval / embed-interval / manual update 周期里先 export 成 sessions collection，再被 QMD 索引。QMD 收到 <code class="inline">sessionFiles</code> hint 时不会做 builtin 那种“只刷这个 JSONL”，源码里是忽略 hint、跑 regular update。</div>
+
+          <pre><code>export function shouldSyncSessionsForReindex(params) {
+  if (!params.hasSessionSource) return false;
+  if (params.sync?.sessionFiles?.some((f) =&gt; f.trim().length &gt; 0)) return true;
+  if (params.sync?.force) return true;
+  if (params.needsFullReindex) return true;
+  const reason = params.sync?.reason;
+  if (reason === "session-start" || reason === "watch") return false;
+  return params.sessionsDirty &amp;&amp; params.dirtySessionFileCount &gt; 0;
+}</code></pre>
+
+          <div class="callout">所以你可以这样记：<strong>transcript 先作为 JSONL 被写下来；OpenClaw 再按“首次搜索兜底 / 增量阈值 / 全量重建 / 定向刷新 / QMD 更新周期”把它变成可检索索引。</strong></div>
+          <div class="refs">参考：<code class="inline">extensions/memory-core/src/memory/manager-sync-ops.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-session-reindex.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager.ts</code>、<code class="inline">packages/memory-host-sdk/src/host/session-files.ts</code>、<code class="inline">docs/reference/memory-config.md</code></div>

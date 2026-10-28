@@ -1,10 +1,38 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">31</div><h2>Markdown memory 文件到底干啥</h2></div>
+          <p>不是。Markdown memory 文件<strong>不只是 RAG 之后用来验证全文</strong>。它们是 OpenClaw memory 的<strong>源数据 / source of truth</strong>。RAG index、FTS、vector、QMD collection 都是从这些文件派生出来的缓存或检索结构。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 长期记忆的真实载体</h3>
+              <p><code class="inline">MEMORY.md</code> 存 curated long-term memory：稳定事实、偏好、长期决策、短摘要。<code class="inline">memory/YYYY-MM-DD.md</code> 存 daily notes：当天上下文、观察、会议/任务记录、较详细的临时知识。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 启动上下文来源</h3>
+              <p><code class="inline">MEMORY.md</code> 会作为主长期记忆在主私聊 session 启动时进入上下文，受 bootstrap budget 限制。daily memory 更适合按需检索，避免把所有日志都塞进每次 prompt。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. 搜索索引的原材料</h3>
+              <p>sync 会扫描这些 Markdown 文件，切成 chunks，写入 SQLite <code class="inline">chunks</code>、<code class="inline">chunks_fts</code>、可选 <code class="inline">chunks_vec</code>；如果用 QMD，就创建/更新 QMD collection。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. memory_get 的原文来源</h3>
+              <p><code class="inline">memory_search</code> 返回的是片段和行号，<code class="inline">memory_get</code> 再按 path/from/lines 回到 Markdown 文件读原文。这确实用于核对 RAG 结果，但只是它的其中一个用途。</p>
+            </article>
+            <article class="mini-card">
+              <h3>5. flush 的写入目标</h3>
+              <p>compaction 前的 memory flush 会要求模型把重要信息追加到 <code class="inline">memory/YYYY-MM-DD.md</code>，不是写到向量库本身。向量库之后可以由 sync 重建。</p>
+            </article>
+            <article class="mini-card">
+              <h3>6. 人类可审计和可编辑</h3>
+              <p>因为是普通 Markdown，你可以直接打开、编辑、review、删掉错误记忆。索引只是服务检索；真正该信任和维护的是文件内容。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>所以正确关系是：</p>
+          <pre><code>Markdown memory files
+  = durable source of truth
+  -> sync/chunk
+  -> FTS/vector/QMD index
+  -> memory_search returns snippets
+  -> memory_get reads original Markdown lines
+  -> model answers with verified context</code></pre>
+          <div class="callout">结论：Markdown 文件不是“RAG 后的全文验证附件”。它们是 OpenClaw 记忆的正本。RAG index 是从正本生成的检索视图；<code class="inline">memory_get</code> 是回到正本核对和读取更多上下文。</div>
+          <div class="refs">参考：<code class="inline">docs/concepts/memory.md</code>、<code class="inline">docs/concepts/agent-workspace.md</code>、<code class="inline">packages/memory-host-sdk/src/host/internal.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-embedding-ops.ts</code>、<code class="inline">extensions/memory-core/src/flush-plan.ts</code></div>

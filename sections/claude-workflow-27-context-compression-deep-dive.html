@@ -1,10 +1,86 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">C27</div><h2>Claude Code 上下文压缩策略详解：不是简单 75% 滑动窗口</h2></div>
+          <p>你的原认知里有一半是对的：Claude Code 确实有一层<strong>LLM 摘要压缩</strong>，也确实会在上下文接近预算时自动触发压缩。但把它理解成“到 75% 后用滑动窗口保留最近 token”会误导。源码里更准确的模型是：<strong>多层上下文治理 pipeline + 动态阈值 + 摘要边界 + 工具结果瘦身 + post-compact 状态重建</strong>。</p>
+          <div class="callout"><strong>一句话：</strong>Claude Code 不是简单 FIFO 丢旧消息，也不是固定 75% 触发；它先尽量清理高成本工具结果，再按模型上下文窗口计算阈值，必要时调用一个 forked compact agent 生成详细工程摘要，然后用 compact boundary、summary、附件、文件状态、plan mode、hooks 和工具/MCP 状态重新拼出下一轮上下文。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 为什么不是“滑动窗口算法”</h3>
+              <p>滑动窗口的直觉是：只保留最后 N 个 token，前面的都丢掉。Claude Code 不是这样。<code class="inline">query.ts</code> 每轮会先调用 <code class="inline">getMessagesAfterCompactBoundary()</code>，也就是说上次 compact 前的原始历史不再原样发送；它被一个 compact summary 代表。</p>
+              <p>这是一种<strong>语义压缩边界</strong>：旧历史被“摘要消息 + 边界元数据”替换，近期消息和运行时附件继续保留。它有点像保留 recent tail，但不是机械 token 滑窗。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. 为什么不是固定 75%</h3>
+              <p><code class="inline">autoCompact.ts</code> 里阈值不是写死 75%。它先算 <code class="inline">getEffectiveContextWindowSize(model)</code>：模型上下文窗口减去摘要输出预留，摘要最多预留 <code class="inline">20,000</code> tokens。然后自动压缩阈值是 <code class="inline">effectiveContextWindow - 13,000</code>。</p>
+              <p>所以真实触发点随模型窗口、最大输出、环境变量覆盖和 feature flag 变化。75% 更像某些 UI 警告或经验数字，不能当成 Claude Code auto compact 的核心规则。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. 压缩前先做 tool result 瘦身</h3>
+              <p>在真的总结整段对话之前，Claude Code 会先处理最容易爆上下文的部分：工具输出。<code class="inline">microCompact.ts</code> 只针对 Read、Bash、Grep、Glob、WebFetch、WebSearch、Edit、Write 等 compactable tools，把旧 tool_result 内容清掉或通过 cache editing 删除。</p>
+              <p>这一步不是 LLM 摘要，而是<strong>结构化删减工具输出</strong>。很多 coding agent 的上下文爆炸不是来自用户文字，而是来自文件读取、grep、大段 shell 输出。Claude Code 先处理这里，避免过早把整段会话压成摘要。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. compact summary 的提示词很工程化</h3>
+              <p><code class="inline">prompt.ts</code> 的 compact prompt 不是简单说“总结一下”。它要求摘要保留用户意图、技术概念、读过/改过的文件、关键代码片段、错误和修复、问题解决过程、所有非工具用户消息、待办、当前工作和下一步。</p>
+              <p>这说明 Claude Code 的摘要目标不是聊天摘要，而是<strong>让下一个模型回合能继续工程任务</strong>。它会刻意保留文件路径、函数签名、具体代码、用户反馈和未完成动作。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>从源码看，一轮模型调用前的上下文治理顺序大致是：</p>
+          <pre><code>原始 messages
+  → getMessagesAfterCompactBoundary()
+     只取上次 compact 边界之后的消息
+  → applyToolResultBudget()
+     对过大的工具结果做预算控制
+  → snipCompactIfNeeded()
+     可选历史 snip，释放估算 tokens
+  → microcompactMessages()
+     清理或 cache-edit 旧工具结果
+  → applyCollapsesIfNeeded()
+     可选 context collapse，保留更细粒度上下文
+  → autoCompactIfNeeded()
+     超过动态阈值才做 LLM compact
+  → buildPostCompactMessages()
+     boundary + summary + kept messages + attachments + hooks
+  → 下一次 Anthropic API 请求</code></pre>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>5. compact 后会重建状态，不只是塞摘要</h3>
+              <p><code class="inline">compact.ts</code> 里的 <code class="inline">compactConversation()</code> 成功后会创建 <code class="inline">boundaryMarker</code> 和 <code class="inline">summaryMessages</code>，然后重新注入一批附件：最近读过的文件内容、异步 agent 状态、plan 文件、plan mode 指令、已调用 skill、deferred tools、agent listing、MCP instructions、session start hooks。</p>
+              <p><code class="inline">buildPostCompactMessages()</code> 的顺序是 <code class="inline">boundaryMarker → summaryMessages → messagesToKeep → attachments → hookResults</code>。这就是为什么它不是“一层摘要完事”：压缩后还要恢复能继续工作的运行时上下文。</p>
+            </article>
+            <article class="mini-card">
+              <h3>6. prompt too long 还有兜底恢复</h3>
+              <p>如果 compact 请求本身都因为 prompt too long 失败，<code class="inline">truncateHeadForPTLRetry()</code> 会按 API round 分组，从最旧的组开始丢，最多重试几次，并插入 <code class="inline">[earlier conversation truncated for compaction retry]</code> 这样的元消息。</p>
+              <p>这才比较像“丢旧上下文”，但它是异常兜底，不是日常主策略。正常路径优先是 microcompact、context collapse、LLM summary 和状态重建。</p>
+            </article>
+            <article class="mini-card">
+              <h3>7. context collapse 会和 autocompact 分工</h3>
+              <p>源码注释里提到 context collapse 有自己的 90% commit-start 和 95% blocking-spawn 逻辑。开启 context collapse 时，<code class="inline">shouldAutoCompact()</code> 会避免 proactive autocompact 抢先触发，因为它会“nuke”掉 collapse 正准备保留的细粒度上下文。</p>
+              <p>所以 Claude Code 不是只有一个 compact 机制，而是多套上下文治理策略互相避让：collapse 负责更细粒度保留，autocompact 负责传统大摘要，reactive compact 负责 API 报错后的恢复。</p>
+            </article>
+            <article class="mini-card">
+              <h3>8. 失败会熔断，避免无限压缩</h3>
+              <p><code class="inline">autoCompact.ts</code> 里有连续失败计数，默认连续失败 <code class="inline">3</code> 次后就不再反复尝试自动 compact。原因也写在注释里：有些 session 已经不可恢复地超过限制，继续每轮 compact 只会浪费 API 调用。</p>
+              <p>这说明上下文压缩在 Claude Code 里是运行时系统的一部分，要考虑失败恢复、成本、缓存命中和用户体验，而不是一个单纯算法函数。</p>
+            </article>
+          </div>
+
+          <p>所以可以把你的旧模型升级成下面这个版本：</p>
+          <pre><code>旧理解：
+到 75% 上下文
+  → 启动 LLM 摘要
+  → 滑动窗口保留最近内容
+
+更接近 Claude Code 源码：
+每一轮 query 前
+  → 先尊重 compact boundary，不重复发送已摘要旧历史
+  → 工具结果按预算瘦身，旧 Read/Bash/Grep 输出优先被清理
+  → 可选 snip / microcompact / context collapse
+  → token 超过模型相关动态阈值 effectiveWindow - 13000 才 autocompact
+  → forked compact agent 生成面向工程续作的详细摘要
+  → compact 后重建 boundary、summary、文件附件、plan 状态、skill、MCP、agent/tool 状态
+  → 如果 API 仍报 prompt-too-long，再走 reactive/truncate 兜底</code></pre>
+
+          <div class="callout">最终心智模型：Claude Code 的上下文压缩不是“摘要层 + 滑动窗口层”，而是<strong>缓存友好的上下文操作系统</strong>。它把对话历史、工具输出、文件状态、计划状态、子 agent 状态、hook 结果和模型窗口预算分开管理；该清工具输出就清工具输出，该生成语义摘要才生成摘要，该保留运行时状态就重新注入附件。</div>
+          <div class="refs">参考文件：<code class="inline">src/query.ts</code>、<code class="inline">src/services/compact/autoCompact.ts</code>、<code class="inline">src/services/compact/compact.ts</code>、<code class="inline">src/services/compact/microCompact.ts</code>、<code class="inline">src/services/compact/prompt.ts</code>、<code class="inline">src/services/compact/grouping.ts</code>、<code class="inline">src/services/api/errors.ts</code>、<code class="inline">src/utils/messages.ts</code>。</div>

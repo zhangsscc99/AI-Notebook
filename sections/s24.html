@@ -1,10 +1,27 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">24</div><h2>builtin SQLite 表结构</h2></div>
+          <p>builtin memory index 的核心数据在 SQLite。它不是只存一堆文本，而是把文件状态、chunk、FTS、embedding cache、可选 vector table 分开维护。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>meta</h3>
+              <p>存索引元数据，例如 provider/model、chunk 参数、vector 维度、FTS tokenizer、scope hash。用于判断是否需要 full reindex。</p>
+            </article>
+            <article class="mini-card">
+              <h3>files</h3>
+              <p>按 path 记录文件 hash、mtime、size、source。sync 用它判断文件是否变了，以及哪些旧文件已经不存在。</p>
+            </article>
+            <article class="mini-card">
+              <h3>chunks</h3>
+              <p>每个 chunk 一行：id、path、source、start_line、end_line、hash、model、text、embedding、updated_at。它是搜索结果和 memory_get 行号的基础。</p>
+            </article>
+            <article class="mini-card">
+              <h3>chunks_fts / chunks_vec</h3>
+              <p><code class="inline">chunks_fts</code> 是 FTS5 虚表；<code class="inline">chunks_vec</code> 是 sqlite-vec 虚表，只有 vector enabled 且扩展可用时创建。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <pre><code>meta
+files(path, source, hash, mtime, size)
+chunks(id, path, source, start_line, end_line, hash, model, text, embedding, updated_at)
+chunks_fts(text, id, path, source, model, start_line, end_line)
+chunks_vec(id, embedding)</code></pre>
+          <div class="callout">研究表结构时重点看两件事：source 字段如何区分 memory / sessions，以及 model 字段如何避免不同 embedding 模型的索引混在一起。</div>
+          <div class="refs">参考：<code class="inline">packages/memory-host-sdk/src/host/memory-schema.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-sync-ops.ts</code>、<code class="inline">extensions/memory-core/src/memory/manager-vector-write.ts</code></div>

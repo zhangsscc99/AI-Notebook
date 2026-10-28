@@ -1,10 +1,20 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">C16</div><h2>Claude Code 支持哪几种工作流执行模式？各自的适用场景是什么？</h2></div>
+          <p>Claude Code 的执行模式可以按入口、agent 形态、权限/隔离和并发方式理解。底层大多复用同一套 query/tool/task 机制。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card"><h3>1. 交互式 REPL</h3><p>适合人机协作、看 diff、逐步确认、处理权限弹窗。入口：<code class="inline">src/screens/REPL.tsx</code>。</p></article>
+            <article class="mini-card"><h3>2. Headless / SDK / print</h3><p>适合脚本、CI、服务端集成、非交互自动化。入口：<code class="inline">src/QueryEngine.ts</code>、<code class="inline">src/cli/print.ts</code>。</p></article>
+            <article class="mini-card"><h3>3. 单 agent ReAct 循环</h3><p>默认模式，适合大多数读代码、改代码、跑测试任务。核心：<code class="inline">src/query.ts</code>。</p></article>
+            <article class="mini-card"><h3>4. Plan-gated 模式</h3><p>适合复杂修改前先探索、写计划、审批后实现。核心是 permission mode + plan file + Enter/ExitPlanMode。</p></article>
+            <article class="mini-card"><h3>5. 同步 subagent</h3><p>父 agent 等子 agent 完成，结果直接作为 tool_result 返回。适合短研究、短规划、一次性检查。</p></article>
+            <article class="mini-card"><h3>6. 异步 background agent/task</h3><p>父 agent 启动后台任务后继续工作，后续通过 task notification 或 output file 获取结果。适合长搜索、长测试、并行探索。</p></article>
+            <article class="mini-card"><h3>7. Coordinator / Team swarm</h3><p>用 TeamCreate、Agent(name)、SendMessage、TaskList 组织多个 worker。适合大项目拆分和并行研发。</p></article>
+            <article class="mini-card"><h3>8. Worktree / remote isolation</h3><p>让 agent 在独立工作区或远端环境里跑，适合实验性修改、多 agent 并行和避免污染主工作区。</p></article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <pre><code>小任务 -> 单 agent
+复杂需审批 -> plan-gated
+短研究 -> 同步 subagent
+长任务/并行探索 -> background agent
+大项目并行 -> Team swarm
+担心污染工作区 -> worktree isolation
+CI/API -> Headless/SDK</code></pre>
+          <div class="refs">参考文件：<code class="inline">src/screens/REPL.tsx</code>、<code class="inline">src/QueryEngine.ts</code>、<code class="inline">src/cli/print.ts</code>、<code class="inline">src/query.ts</code>、<code class="inline">src/tools/AgentTool/AgentTool.tsx</code>、<code class="inline">src/tasks/LocalAgentTask/LocalAgentTask.tsx</code>、<code class="inline">src/coordinator/coordinatorMode.ts</code>、<code class="inline">src/tools/TeamCreateTool/*</code>、<code class="inline">src/utils/worktree.ts</code>。</div>

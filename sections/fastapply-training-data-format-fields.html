@@ -1,10 +1,86 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">28</div><h2>MinT / FastApply 训练数据格式：几个字段分别是什么意思</h2></div>
+          <p>这个项目里“训练数据格式”有三层，不要混在一起：<strong>原始代码变更样本</strong>、<strong>转换后的 prompt 训练样本</strong>、<strong>真正送进 MinT API 的 token-level Datum</strong>。训练最终用的是第三层；第二层是人类可读、可保存、可复查的数据集格式。</p>
+          <div class="callout"><strong>一句话：</strong>原始样本描述“旧代码 + patch → 新代码”；prompt 样本描述“给模型看的 prompt + 标准答案/奖励答案”；MinT Datum 描述“token 序列 + target_tokens + weights + logprobs/advantages”。</div>
+
+          <h3>第一层：原始 / 清洗后的 FastApply 样本</h3>
+          <p>来源是 Git diff 或 tiny fixture，目标是保留一条可验证的代码修改任务。典型 JSONL 长这样：</p>
+          <pre><code>{
+  "id": "py-search-replace-cache",
+  "language": "python",
+  "old_source": "def fetch_user(...): ...",
+  "patch": "<<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE",
+  "new_source": "def fetch_user(..., cache=None): ...",
+  "change_kind": "search_replace",
+  "origin": "tiny_test_fixture"
+}</code></pre>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card"><h3><code class="inline">id</code></h3><p>样本唯一标识。训练报告、rollout、debug 时用它把 prompt、response、reward 对回同一个任务。</p></article>
+            <article class="mini-card"><h3><code class="inline">language</code></h3><p>代码语言，比如 python / javascript。用于渲染 prompt，也会传给 reward / syntax checker 做语言相关判断。</p></article>
+            <article class="mini-card"><h3><code class="inline">old_source</code> / <code class="inline">source</code></h3><p>修改前的完整或片段代码。模型看到的是这份旧代码。</p></article>
+            <article class="mini-card"><h3><code class="inline">patch</code> / <code class="inline">diff</code> / <code class="inline">update</code></h3><p>要应用到旧代码上的变化说明。可能是 SEARCH/REPLACE patch，也可能是 unified diff 或 structured JSON changes。</p></article>
+            <article class="mini-card"><h3><code class="inline">new_source</code> / <code class="inline">reference</code></h3><p>标准答案：应用 patch 后应该得到的新代码。reward 会拿模型输出和它比。</p></article>
+            <article class="mini-card"><h3><code class="inline">metadata</code> / <code class="inline">repo</code> / <code class="inline">file</code></h3><p>追踪字段。真实 Git 数据会记录来自哪个仓库、哪个文件、哪个 commit；训练本身不一定直接用，但排查数据质量很重要。</p></article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>第二层：转换后的 prompt 训练样本</h3>
+          <p><code class="inline">rl_master/applications/fastapply/build/convert.py</code> 会把清洗样本转成 RL / SFT 都能读的 prompt row。核心字段是 6 个：</p>
+          <pre><code>{
+  "data_source": "apply",
+  "prompt": "You are a coding assistant... &lt;source&gt;...&lt;/source&gt; &lt;patch&gt;...&lt;/patch&gt;",
+  "ability": "fast_apply",
+  "reward_model": {
+    "style": "rule",
+    "ground_truth": "应用 patch 后的新代码"
+  },
+  "extra_info": {
+    "id": "样本 id",
+    "repo": "来源仓库，可为空",
+    "file": "来源文件，可为空",
+    "language": "python"
+  },
+  "response": "&lt;updated&gt;
+标准新代码
+&lt;/updated&gt;"
+}</code></pre>
+          <div class="grid-2">
+            <article class="mini-card"><h3><code class="inline">data_source</code></h3><p>任务来源/任务类型。这里固定是 <code class="inline">apply</code>，reward 函数用它知道这是 FastApply 应用补丁任务。</p></article>
+            <article class="mini-card"><h3><code class="inline">prompt</code></h3><p>真正喂给模型的输入文本。由 system prompt + instruction + <code class="inline">&lt;language&gt;</code> + <code class="inline">&lt;source&gt;</code> + <code class="inline">&lt;patch&gt;</code> 组成。</p></article>
+            <article class="mini-card"><h3><code class="inline">ability</code></h3><p>能力标签。这里是 <code class="inline">fast_apply</code>，用于统计、路由、混合多任务训练时区分能力。</p></article>
+            <article class="mini-card"><h3><code class="inline">reward_model</code></h3><p>奖励配置。<code class="inline">style="rule"</code> 表示先走规则比较；<code class="inline">ground_truth</code> 是标准新代码。</p></article>
+            <article class="mini-card"><h3><code class="inline">extra_info</code></h3><p>额外元信息。reward 里会读 <code class="inline">language</code>，debug 时用 id/repo/file 追踪数据来源。</p></article>
+            <article class="mini-card"><h3><code class="inline">response</code></h3><p>SFT 的标准输出格式，必须包在 <code class="inline">&lt;updated&gt;</code> 标签里。GRPO 时它可作为 oracle rollout 或验证参考。</p></article>
+          </div>
+
+          <h3>第三层：真正送进 MinT 的 <code class="inline">types.Datum</code></h3>
+          <p>MinT 训练 API 不直接吃上面的 JSON 字符串字段，而是吃 token 化后的 <code class="inline">types.Datum</code>。SFT smoke 里每条 Datum 主要有 2 个顶层字段：</p>
+          <pre><code>types.Datum(
+  model_input=types.ModelInput.from_ints(tokens=all_tokens[:-1]),
+  loss_fn_inputs={
+    "target_tokens": all_tokens[1:],
+    "weights": [0.0] * prompt_len + [1.0] * response_len
+  }
+)</code></pre>
+          <div class="grid-2">
+            <article class="mini-card"><h3><code class="inline">model_input.tokens</code></h3><p>模型实际输入 token。训练 next-token prediction，所以输入是完整 token 序列去掉最后一个 token：<code class="inline">all_tokens[:-1]</code>。</p></article>
+            <article class="mini-card"><h3><code class="inline">target_tokens</code></h3><p>监督目标 token。它是完整 token 序列右移一位：<code class="inline">all_tokens[1:]</code>，让模型预测下一个 token。</p></article>
+            <article class="mini-card"><h3><code class="inline">weights</code></h3><p>loss mask。prompt 部分权重是 0，不训练模型复述 prompt；response 部分权重是 1，只训练模型生成答案。</p></article>
+            <article class="mini-card"><h3><code class="inline">loss_fn</code></h3><p>SFT 用 <code class="inline">cross_entropy</code>；GRPO/importance sampling 用 <code class="inline">importance_sampling</code>，字段会更多。</p></article>
+          </div>
+
+          <h3>GRPO / importance_sampling 时多出来的字段</h3>
+          <p>GRPO 不是只有标准答案，而是同一个 prompt 采样多条 response，给每条 response 打 reward，再算组内 advantage。因此 <code class="inline">loss_fn_inputs</code> 会多两个关键字段：</p>
+          <pre><code>loss_fn_inputs={
+  "target_tokens": full[1:],
+  "weights": [0.0] * prompt_prefix + [1.0] * len(response_tokens),
+  "logprobs": [0.0] * prompt_prefix + response_logprobs,
+  "advantages": [0.0] * prompt_prefix + [advantage] * len(response_tokens)
+}</code></pre>
+          <div class="grid-2">
+            <article class="mini-card"><h3><code class="inline">logprobs</code></h3><p>采样时旧策略对每个生成 token 的 log probability。importance sampling 要用它和当前策略概率做 ratio。</p></article>
+            <article class="mini-card"><h3><code class="inline">advantages</code></h3><p>这条 response 相对同组其他 response 的好坏。reward 高于组平均，advantage 为正；低于组平均，为负。它会复制到该 response 的每个 token。</p></article>
+            <article class="mini-card"><h3><code class="inline">prompt_id</code> / <code class="inline">traj_group_id</code></h3><p>在 RL-master smoke 的 <code class="inline">RolloutSample</code> 里用于分组。GRPO 必须知道哪些 rollout 属于同一个 prompt，才能算组内 advantage。</p></article>
+            <article class="mini-card"><h3><code class="inline">reward</code> / <code class="inline">metadata</code></h3><p>reward 是规则/裁判给分；metadata 记录 index、validity、rule_correctness 等分析字段，帮助排查为什么某条 rollout 好或坏。</p></article>
+          </div>
+
+          <div class="callout">最短记忆法：<strong>保存到磁盘的人类可读数据是 <code class="inline">prompt + reward_model.ground_truth + response + extra_info</code>；真正训练时会变成 <code class="inline">model_input.tokens + target_tokens + weights</code>，GRPO 再加 <code class="inline">logprobs + advantages</code>。</strong></div>
+          <div class="refs">参考：<code class="inline">/root/rlhf/rl_master/applications/fastapply/build/convert.py</code>、<code class="inline">/root/rlhf/fastapply_pipeline/templates.py</code>、<code class="inline">/root/rlhf/mint_simple_training/simple_mint_sft.py</code>、<code class="inline">/root/rlhf/fastapply_pipeline/grpo.py</code>、<code class="inline">/root/rlhf/fastapply_pipeline/train_mint_fastapply_grpo.py</code>、<code class="inline">/root/rlhf/rl_master/agent/environment/manager.py</code>、<code class="inline">/root/rlhf/rl_master/agent/trainer/grpo.py</code></div>

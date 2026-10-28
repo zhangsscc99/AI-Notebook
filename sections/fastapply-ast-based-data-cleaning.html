@@ -1,10 +1,68 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">27</div><h2>minT / FastApply 里的“基于 AST 清洗数据”是什么</h2></div>
+          <p><strong>基于 AST 清洗数据</strong>，不是简单看 diff 里有没有加减号，而是把 old_source 和 new_source 解析成语法树，判断这次代码变更到底动到了什么语义结构：import、class、function、statement、docstring、comment 等。这样可以过滤掉“不适合训练 FastApply 的脏样本”。</p>
+          <div class="callout"><strong>一句话：</strong>AST 清洗 = 把代码变成 Unit 树 → 把 diff hunk 映射到 Unit 的行号 span → 判断被修改的是不是功能性代码 → 过滤纯注释/纯格式/不可解析/过大/过多 hunk 的样本。</div>
+
+          <p>源码里的流程是：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先解析语法树。</strong><code class="inline">filter.py</code> 里对 old_source 和 new_source 分别调用 <code class="inline">build_ast(language, source)</code>。</div>
+            <div class="flow-step" data-step="2"><strong>AST 被转成 Unit 树。</strong>Python 走 <code class="inline">ast.parse</code>，把节点转成 <code class="inline">import</code>、<code class="inline">class</code>、<code class="inline">function</code>、<code class="inline">docstring</code>、<code class="inline">statement</code> 等 Unit；JS/Go/Rust 等在当前复刻里用轻量 regex / brace fallback。</div>
+            <div class="flow-step" data-step="3"><strong>拆 diff hunks。</strong>按 <code class="inline">@@ -a,b +c,d @@</code> 把 unified diff 拆成 <code class="inline">Hunk</code>，拿到旧文件和新文件里被改动的行号范围。</div>
+            <div class="flow-step" data-step="4"><strong>把 hunk 映射到 Unit。</strong><code class="inline">ChangeContext</code> 用 hunk 的行号 span 判断哪个 Unit 被修改；<code class="inline">expand_context_to_all_units()</code> 再把修改状态向子节点传播。</div>
+            <div class="flow-step" data-step="5"><strong>跑规则。</strong>规则会检查是否有 functional modification、是否只动 function/class/statement、是否要求 import modification、hunk 数是否过多、代码是否超长。</div>
+            <div class="flow-step" data-step="6"><strong>通过才进入训练数据。</strong>通过 AST 清洗后，样本才会继续 generate / deduplicate / convert 成 GRPO prompt。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么不用纯 diff 清洗</h3>
+              <p>纯 diff 只能看到哪几行变了，看不懂这些行属于函数、类、import、注释还是 docstring。训练 FastApply 时，我们更关心“功能性代码更新”，而不是大量格式化、注释修正、无意义重排。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Unit 是什么</h3>
+              <p>Unit 是源码里的轻量 AST 节点包装，带 <code class="inline">type</code>、<code class="inline">span</code>、children、parent。比如一个函数 Unit 的 span 是第 10 到 40 行；如果 diff 命中这些行，就能判断这个函数被改了。</p>
+            </article>
+            <article class="mini-card">
+              <h3>functional modification 是什么</h3>
+              <p><code class="inline">functional</code> 在源码里对应 <code class="inline">class</code>、<code class="inline">function</code>、<code class="inline">statement</code>。只要被修改 Unit 落在这些类型里，就说明这条样本至少改到了功能逻辑。</p>
+            </article>
+            <article class="mini-card">
+              <h3>non-functional 会怎样</h3>
+              <p>如果只动 comment、docstring、package、import 这类非功能性范围，可能会被过滤，取决于规则配置。当前 <code class="inline">Filter</code> 默认要求有功能性修改，并可选要求 import 修改。</p>
+            </article>
+          </div>
+
+          <p>拿一个具体例子：</p>
+          <pre><code>旧代码：
+def calc(x):
+    return x + 1
+
+新代码：
+def calc(x):
+    return x + 2
+
+diff 命中第 2 行
+AST Unit:
+  function calc span=[1,2]
+    statement return span=[2,2]
+
+ChangeContext 发现 statement 被改
+=> functional modification = true
+=> 样本保留</code></pre>
+
+          <p>再看一个会被过滤的例子：</p>
+          <pre><code>旧代码：
+def calc(x):
+    """old doc"""
+    return x + 1
+
+新代码：
+def calc(x):
+    """new doc"""
+    return x + 1
+
+diff 只命中 docstring Unit
+=> 没有真正 statement/function 逻辑变化
+=> 对 FastApply 训练价值低，倾向过滤</code></pre>
+
+          <div class="callout">核心意义：AST 清洗让训练数据从“文本行变化”升级成“语义结构变化”。这能减少格式/注释噪声，让模型主要学习如何把补丁应用到真实代码逻辑里，而不是学一堆低价值 diff。</div>
+          <div class="refs">参考：<code class="inline">/root/rlhf/rl_master/applications/fastapply/build/filter.py</code>、<code class="inline">data/ast/ast_python.py</code>、<code class="inline">data/ast/ast_base.py</code>、<code class="inline">data/utils.py</code>、<code class="inline">data/types.py</code>、<code class="inline">generate.py</code></div>

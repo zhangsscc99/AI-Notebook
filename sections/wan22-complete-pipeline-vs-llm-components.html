@@ -1,10 +1,108 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">WAN7</div><h2>Wan2.2 完整 pipeline 是什么，有别于 LLM 的组件结构是什么</h2></div>
+          <p>我读的是服务器源码 <code class="inline">/root/Wan2.2</code>。Wan2.2 的完整生成链路不是“Transformer 直接输出视频文件”，而是一个<strong>视频 latent 扩散/flow matching 系统</strong>：CLI 选择任务 → prompt / image / audio 条件预处理 → T5 / VAE / 其他条件 encoder 编码 → 初始化整段视频 latent 噪声 → scheduler 多步采样 → WanModel/DiT 预测更新方向 → CFG 合成条件/无条件预测 → VAE 解码成 RGB 帧 → 保存 mp4。</p>
+          <div class="callout"><strong>一句话：</strong>LLM 的 pipeline 是“tokenizer → Transformer → 下一个离散 token → detokenize”；Wan2.2 是“条件编码器 → 视频 latent 噪声 → DiT 多步去噪 → VAE 解码 → 视频编码保存”。两者都用 Transformer，但 Wan 多了 VAE、scheduler、timestep、视频时空 latent、3D patch、CFG、多模态条件、high/low noise expert、分布式/显存调度这些非 LLM 组件。</div>
+
+          <h3>1. 从 generate.py 看顶层任务路由</h3>
+          <p><code class="inline">generate.py</code> 是 CLI 入口。它根据 <code class="inline">args.task</code> 选择不同 pipeline：<code class="inline">WanT2V</code>、<code class="inline">WanTI2V</code>、<code class="inline">WanI2V</code>、<code class="inline">WanS2V</code>、<code class="inline">WanAnimate</code>。这点和 LLM 不同：LLM 通常只有文本输入输出主干；Wan 的输入形态会决定额外条件分支。</p>
+          <pre><code>generate.py 顶层路由：
+T2V    -> WanT2V.generate(prompt)
+TI2V   -> WanTI2V.generate(prompt, optional image)
+I2V    -> WanI2V.generate(prompt, image)
+S2V    -> WanS2V.generate(prompt, image, audio, pose...)
+Animate-> WanAnimate.generate(reference, motion...)
+最后统一 save_video(video, fps=cfg.sample_fps)</code></pre>
+
+          <h3>2. 文生视频 T2V 的主 pipeline</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>配置决定模型组件。</strong><code class="inline">wan_t2v_A14B.py</code> 配置 T5 checkpoint、VAE checkpoint、<code class="inline">vae_stride=(4,8,8)</code>、<code class="inline">patch_size=(1,2,2)</code>、high/low noise checkpoint、采样步数、boundary 和 CFG scale。</div>
+            <div class="flow-step" data-step="2"><strong>T5 文本编码。</strong><code class="inline">WanT2V.__init__()</code> 创建 <code class="inline">T5EncoderModel</code>。生成时对正向 prompt 和 negative prompt 分别编码，得到 <code class="inline">context</code> 与 <code class="inline">context_null</code>。</div>
+            <div class="flow-step" data-step="3"><strong>目标视频 latent 形状。</strong><code class="inline">target_shape = [z_dim, F_latent, H_latent, W_latent]</code>，其中 <code class="inline">F/H/W</code> 被 <code class="inline">vae_stride</code> 压缩。这里的 latent 是整段视频，不是逐帧 token。</div>
+            <div class="flow-step" data-step="4"><strong>初始化随机噪声。</strong>源码用 <code class="inline">torch.randn(target_shape)</code> 生成初始 video latent。生成过程从纯噪声开始，而不是像 LLM 一样从 BOS token 开始。</div>
+            <div class="flow-step" data-step="5"><strong>构造 flow scheduler。</strong>根据 <code class="inline">sample_solver</code> 选择 <code class="inline">FlowUniPCMultistepScheduler</code> 或 <code class="inline">FlowDPMSolverMultistepScheduler</code>，并设置 <code class="inline">timesteps</code>。</div>
+            <div class="flow-step" data-step="6"><strong>每个 timestep 调 DiT。</strong>采样循环里把当前 latent、timestep、文本 context、seq_len 输入 <code class="inline">WanModel</code>，模型输出与 latent 同形状的 update / noise_pred。</div>
+            <div class="flow-step" data-step="7"><strong>CFG 合成。</strong>同一步会跑条件预测 <code class="inline">noise_pred_cond</code> 和无条件预测 <code class="inline">noise_pred_uncond</code>，再用 <code class="inline">uncond + scale * (cond - uncond)</code> 增强提示词服从度。</div>
+            <div class="flow-step" data-step="8"><strong>scheduler 更新 latent。</strong><code class="inline">sample_scheduler.step(...)</code> 把当前 latent 更新到下一步，循环 40/50 步左右。</div>
+            <div class="flow-step" data-step="9"><strong>VAE 解码。</strong>采样结束后 <code class="inline">self.vae.decode(x0)</code> 把 clean video latent 解码成 <code class="inline">[C,F,H,W]</code> RGB 视频张量。</div>
+            <div class="flow-step" data-step="10"><strong>视频保存。</strong><code class="inline">generate.py</code> 调 <code class="inline">save_video()</code>，按 <code class="inline">cfg.sample_fps</code> 写成 mp4。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <pre><code>// wan/text2video.py，核心逻辑简化
+context      = text_encoder([prompt])
+context_null = text_encoder([negative_prompt])
+noise = torch.randn([z_dim, F_latent, H_latent, W_latent])
+latents = [noise]
+
+for t in timesteps:
+    model = high_noise_model if t >= boundary else low_noise_model
+    pred_c = model(latents, t=t, context=context, seq_len=seq_len)[0]
+    pred_u = model(latents, t=t, context=context_null, seq_len=seq_len)[0]
+    pred = pred_u + guide_scale * (pred_c - pred_u)
+    latents = [scheduler.step(pred, t, latents[0])[0]]
+
+video = vae.decode(latents)</code></pre>
+
+          <h3>3. WanModel 内部和 LLM Transformer 的关键差异</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>3D patch embedding</h3>
+              <p><code class="inline">WanModel</code> 用 <code class="inline">nn.Conv3d(in_dim, dim, kernel_size=patch_size, stride=patch_size)</code> 把 <code class="inline">C/F/H/W</code> 视频 latent 切成时空 patch token。LLM 的 token 来自 tokenizer；Wan 的 token 来自视频 latent patch。</p>
+            </article>
+            <article class="mini-card">
+              <h3>F/H/W RoPE</h3>
+              <p><code class="inline">rope_apply()</code> 把 RoPE 频率拆给时间 F、高 H、宽 W。LLM 主要是一维文本位置；Wan 必须知道每个 token 的帧位置和空间位置。</p>
+            </article>
+            <article class="mini-card">
+              <h3>timestep embedding</h3>
+              <p>Wan 每一轮都显式输入扩散/flow timestep。<code class="inline">time_embedding</code> 和 <code class="inline">time_projection</code> 会调制每个 attention block。LLM 推理没有“噪声时间步”这个维度。</p>
+            </article>
+            <article class="mini-card">
+              <h3>cross-attention 读取文本</h3>
+              <p>视频 token 通过 <code class="inline">WanCrossAttention</code> 读取 T5 context。也就是说文本不是被继续生成的对象，而是控制视频 latent 去噪的条件。</p>
+            </article>
+            <article class="mini-card">
+              <h3>head 输出连续 latent update</h3>
+              <p><code class="inline">Head</code> 输出的是 <code class="inline">out_dim * prod(patch_size)</code> 的连续值，再 <code class="inline">unpatchify()</code> 还原成 latent 张量。LLM head 输出的是词表 logits。</p>
+            </article>
+            <article class="mini-card">
+              <h3>不是自回归</h3>
+              <p>Wan 不是“上一帧/上一 token → 下一帧/下一 token”。它每一步整体更新同一个视频 latent；视频逐步变清晰，而不是按时间顺序逐帧吐出。</p>
+            </article>
+          </div>
+
+          <h3>4. 图生视频 / 统一 TI2V 多出来的条件组件</h3>
+          <p>如果是 I2V/TI2V，pipeline 会额外把图片塞进 latent 条件。<code class="inline">WanI2V.generate()</code> 里先把输入图 resize 到目标尺寸，把首帧和后续零帧拼成视频，再用 VAE encode 成 <code class="inline">y</code>，并拼上 mask。<code class="inline">WanModel.forward()</code> 收到 <code class="inline">y</code> 时，会把它和当前 noisy latent 沿 channel 维拼接。</p>
+          <pre><code>// I2V 思路简化
+img_video = concat(resized_first_frame, zeros_for_future_frames)
+y = vae.encode([img_video])[0]
+y = concat(mask, y)
+model(latent, t, context=text_context, y=[y])</code></pre>
+
+          <h3>5. A14B high/low noise expert 是什么</h3>
+          <p>T2V/I2V A14B 不是一个 DiT 从头跑到尾，而是加载 <code class="inline">high_noise_model</code> 和 <code class="inline">low_noise_model</code> 两个 checkpoint。<code class="inline">_prepare_model_for_timestep()</code> 用 <code class="inline">boundary = cfg.boundary * num_train_timesteps</code> 判断当前 timestep 应该用哪个模型。高噪声阶段负责从乱噪声里定大结构，低噪声阶段负责细化纹理和局部质量。</p>
+
+          <h3>6. 和典型 LLM 对照</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>LLM 组件链</h3>
+              <pre><code>文本 -> tokenizer -> token ids
+-> embedding + Transformer decoder
+-> vocab logits -> sample next token
+-> append token，循环
+-> detokenize 成文本</code></pre>
+            </article>
+            <article class="mini-card">
+              <h3>Wan2.2 组件链</h3>
+              <pre><code>prompt/image/audio 条件
+-> T5 / VAE / audio/pose encoder
+-> 随机 video latent
+-> scheduler timesteps
+-> DiT 预测 latent 更新方向
+-> CFG 合成
+-> scheduler 更新整段 latent，循环
+-> VAE decode 成 RGB 帧
+-> save_video 成 mp4</code></pre>
+            </article>
+          </div>
+
+          <div class="callout">最短记忆法：<strong>LLM 的核心资产是“离散文本 token 序列”；Wan2.2 的核心资产是“连续视频 latent 张量”。</strong>所以 Wan 的组件结构围绕压缩视频、控制噪声、建模时空位置、多步求解和像素解码展开；Transformer 只是其中的 denoiser 主干，不是整个系统。</div>
+          <div class="refs">参考源码：<code class="inline">/root/Wan2.2</code> commit <code class="inline">42bf4cf</code>；<code class="inline">generate.py:315-565</code>、<code class="inline">wan/text2video.py:31-378</code>、<code class="inline">wan/textimage2video.py:34-411</code>、<code class="inline">wan/image2video.py:33-390</code>、<code class="inline">wan/modules/model.py:14-66</code>、<code class="inline">wan/modules/model.py:183-258</code>、<code class="inline">wan/modules/model.py:294-520</code>、<code class="inline">wan/modules/vae2_2.py:17-169</code>、<code class="inline">wan/modules/vae2_2.py:888-1051</code>、<code class="inline">wan/modules/t5.py:472-513</code>、<code class="inline">wan/configs/wan_t2v_A14B.py:11-37</code>、<code class="inline">wan/configs/wan_ti2v_5B.py:11-35</code>。</div>

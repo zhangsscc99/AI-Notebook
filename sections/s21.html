@@ -1,10 +1,37 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">21</div><h2>embedding 模型用的是啥</h2></div>
+          <p>这里没有一个全局固定答案，取决于你走的是 <strong>builtin memory 后端</strong> 还是 <strong>QMD 后端</strong>，以及配置里的 provider / model 怎么设。</p>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>builtin 后端</h3>
+              <p>builtin memory 的 embedding 配置在 <code class="inline">agents.defaults.memorySearch</code>。如果显式设置 <code class="inline">provider</code> 和 <code class="inline">model</code>，就用你指定的模型；如果 model 为空，就用该 provider adapter 的默认模型。</p>
+            </article>
+            <article class="mini-card">
+              <h3>auto provider</h3>
+              <p>如果 provider 是 <code class="inline">auto</code> 或没有显式设置，OpenClaw 会按可用性选择 provider：local、github-copilot、openai、gemini、voyage、mistral、deepinfra、bedrock 等。<code class="inline">ollama</code> 支持但通常需要显式配置。</p>
+            </article>
+            <article class="mini-card">
+              <h3>local 默认模型</h3>
+              <p>本地 embedding adapter 的默认模型是 <code class="inline">hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf</code>。文档也把它简称为 <code class="inline">embeddinggemma-300m-qat-Q8_0.gguf</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>OpenAI 示例模型</h3>
+              <p>OpenClaw 配置文档里的 OpenAI 示例使用 <code class="inline">text-embedding-3-small</code>。这不是所有安装的强制默认值，而是显式选择 OpenAI provider 时常见的配置示例。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+          <p>builtin 后端的典型配置：</p>
+          <pre><code>{
+  agents: {
+    defaults: {
+      memorySearch: {
+        provider: "openai",
+        model: "text-embedding-3-small"
+      }
+    }
+  }
+}</code></pre>
+          <p>如果使用 QMD 后端，embedding / rerank / generate 模型主要由 QMD 自己控制。OpenClaw 不在普通 memorySearch 配置里替 QMD 指定模型，而是把这些环境变量原样传给 QMD：</p>
+          <pre><code>export QMD_EMBED_MODEL="hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"
+export QMD_RERANK_MODEL="/absolute/path/to/reranker.gguf"
+export QMD_GENERATE_MODEL="/absolute/path/to/generator.gguf"</code></pre>
+          <div class="callout">判断当前到底用哪个 embedding 模型：先看 <code class="inline">memory.backend</code>。如果是 builtin，看 <code class="inline">agents.defaults.memorySearch.provider/model</code> 和 provider auto-select 结果；如果是 QMD，看 <code class="inline">QMD_EMBED_MODEL</code> 或 QMD 自己下载/选择的模型。</div>
+          <div class="refs">参考：<code class="inline">docs/reference/memory-config.md</code>、<code class="inline">extensions/memory-core/src/memory/embeddings.ts</code>、<code class="inline">extensions/memory-core/src/memory/provider-adapters.ts</code>、<code class="inline">packages/memory-host-sdk/src/host/embedding-defaults.ts</code>、<code class="inline">docs/concepts/memory-qmd.md</code></div>

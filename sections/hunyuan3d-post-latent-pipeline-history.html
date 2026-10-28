@@ -1,10 +1,83 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
-          <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+<div class="section-header"><div class="index">HY3D10</div><h2>从 latent 生成开始，之后 pipeline 各组件是什么，历史上谁提出来的</h2></div>
+          <p>这里从“形状 latent 已经被 DiT / flow matching 采样出来”开始讲，不再重复图片编码和去噪循环。混元3D 后半段不是一个模型直接吐 GLB，而是<strong>clean 3D latent → VAE decoder → 3D 标量场 → 抽等值面 → mesh → 可选清理简化 → UV → 多视角纹理生成 → 纹理烘焙 → inpaint → 导出</strong>。</p>
+          <div class="callout"><strong>一句话：</strong>latent 之后的 pipeline 是“神经网络解码 + 经典图形学算法 + 纹理生成模型”的组合。Hunyuan3D 的贡献在于把这些模块串成可用系统，并训练适配 3D shape latent；不是每个组件都是它首次发明。</div>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>clean shape latent。</strong><code class="inline">Hunyuan3DDiTFlowMatchingPipeline.__call__()</code> 从随机 latent 出发，循环调用 DiT 和 scheduler；最后得到一个较干净的 shape latent。</div>
+            <div class="flow-step" data-step="2"><strong>VAE latent 反缩放。</strong><code class="inline">_export()</code> 里先做 <code class="inline">latents = 1. / self.vae.scale_factor * latents</code>，把采样空间的 latent 还原到 VAE 期望尺度。</div>
+            <div class="flow-step" data-step="3"><strong>ShapeVAE decoder。</strong><code class="inline">self.vae(latents)</code> 调用 <code class="inline">ShapeVAE.forward()</code>：<code class="inline">post_kl</code> 投影，再过 transformer，把低维 latent 变成可被几何 decoder 使用的 latent tokens。</div>
+            <div class="flow-step" data-step="4"><strong>Volume decoding。</strong><code class="inline">latents2mesh()</code> 先调用 <code class="inline">volume_decoder</code>。默认 <code class="inline">VanillaVolumeDecoder</code> 在 3D bounding box 内生成密集网格点，分 chunk 查询 <code class="inline">geo_decoder(queries, latents)</code>，得到 <code class="inline">grid_logits</code>。</div>
+            <div class="flow-step" data-step="5"><strong>Surface extraction。</strong><code class="inline">MCSurfaceExtractor</code> 用 <code class="inline">skimage.measure.marching_cubes()</code> 从 3D 标量场抽出等值面，得到 vertices / faces；可选 <code class="inline">DMCSurfaceExtractor</code> 走 DiffDMC。</div>
+            <div class="flow-step" data-step="6"><strong>trimesh 包装。</strong><code class="inline">export_to_trimesh()</code> 把 <code class="inline">Latent2MeshOutput(mesh_v, mesh_f)</code> 包成 <code class="inline">trimesh.Trimesh</code>，这时已经是一个可导出的几何 mesh。</div>
+            <div class="flow-step" data-step="7"><strong>可选 mesh 后处理。</strong>Gradio / 导出链路里可以做面数简化、去浮岛、退化面清理。源码里 <code class="inline">FaceReducer</code> 用 pymeshlab 的 quadric edge collapse。</div>
+            <div class="flow-step" data-step="8"><strong>UV 展开。</strong>纹理 pipeline 先 <code class="inline">mesh_uv_wrap(mesh)</code>，调用 <code class="inline">xatlas.parametrize()</code> 给 mesh 生成 UV 坐标。</div>
+            <div class="flow-step" data-step="9"><strong>多视角纹理生成。</strong><code class="inline">Hunyuan3DPaintPipeline</code> 渲染 normal map 和 position map，连同输入图一起送进 <code class="inline">Multiview_Diffusion_Net</code>，生成多个相机视角的纹理图。</div>
+            <div class="flow-step" data-step="10"><strong>投影烘焙 + 补洞 + 导出。</strong><code class="inline">back_project()</code> 把多视角图投回 UV；<code class="inline">fast_bake_texture()</code> 按视角权重和 cos map 融合；<code class="inline">uv_inpaint()</code> 补未覆盖区域；最后 <code class="inline">save_mesh()</code> / <code class="inline">export()</code> 得到带纹理模型。</div>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <pre><code>// hy3dgen/shapegen/pipelines.py，latent 之后的核心路径
+return self._export(latents, output_type, box_v, mc_level, num_chunks, octree_resolution, mc_algo)
+
+// _export() 简化
+latents = 1. / self.vae.scale_factor * latents
+latents = self.vae(latents)              // ShapeVAE.forward: post_kl + transformer
+outputs = self.vae.latents2mesh(latents) // volume decoding + surface extraction
+outputs = export_to_trimesh(outputs)     // vertices/faces -> trimesh</code></pre>
+
+          <pre><code>// hy3dgen/texgen/pipelines.py，纹理路径简化
+mesh = mesh_uv_wrap(mesh)                         // xatlas UV
+self.render.load_mesh(mesh)
+normal_maps = render_normal_multiview(...)
+position_maps = render_position_multiview(...)
+multiviews = multiview_model(image, normal + position, camera_info)
+texture, mask = bake_from_multiview(multiviews, camera_elevs, camera_azims, weights)
+texture = texture_inpaint(texture, mask)
+self.render.set_texture(texture)
+textured_mesh = self.render.save_mesh()</code></pre>
+
+          <h3>这些组件在历史上大概来自哪里</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>1. VAE / latent 表示</h3>
+              <p>VAE 通常追溯到 Kingma &amp; Welling 的 <em>Auto-Encoding Variational Bayes</em>（2013）以及 Rezende 等人的随机反向传播/深度生成模型工作（2014）。混元3D 的 ShapeVAE 借的是“把复杂数据压进连续 latent，再从 latent 解码”的思想，只是对象从图像变成 3D shape。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. latent diffusion / latent flow</h3>
+              <p>“在 latent 空间生成，而不是直接在像素/网格空间生成”的代表是 Latent Diffusion Models，Rombach、Blattmann、Lorenz、Esser、Ommer 在 2021/2022 年系统化推动。混元3D 类似地不直接生成 mesh，而是在 3D latent 空间生成。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. DiT 主干</h3>
+              <p>Diffusion Transformer 通常对应 Peebles &amp; Xie 的 <em>Scalable Diffusion Models with Transformers</em>（2022/ICCV 2023）。更早的底座当然是 Vaswani 等人的 Transformer（2017）。混元3D 把 DiT 改成处理 3D shape latent tokens 和图片条件。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. Flow Matching / velocity</h3>
+              <p>Flow Matching 可追溯到 Lipman、Chen、Ben-Hamu、Nickel、Le 的 <em>Flow Matching for Generative Modeling</em>（2022/2023），和 rectified flow / continuous normalizing flow 这一脉相关。混元3D-2 的推理 scheduler 用 flow matching 风格的 Euler 更新。</p>
+            </article>
+            <article class="mini-card">
+              <h3>5. 隐式几何场</h3>
+              <p>Hunyuan 的 <code class="inline">geo_decoder(queries, latents)</code> 像神经隐式场：输入 3D 点和 latent，输出该点附近是否在表面内外的 scalar/logit。相关思想可以联想到 Occupancy Networks（Mescheder 等，2019）和 DeepSDF（Park 等，2019）。这里不要理解成它复用了这些代码，而是同属“用连续函数表示 3D 表面”的路线。</p>
+            </article>
+            <article class="mini-card">
+              <h3>6. Marching Cubes</h3>
+              <p>从 3D 标量场抽 mesh 的经典算法是 Lorensen &amp; Cline 在 SIGGRAPH 1987 提出的 Marching Cubes。源码里 <code class="inline">MCSurfaceExtractor</code> 直接调用 <code class="inline">skimage.measure.marching_cubes(..., method="lewiner")</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>7. Mesh 简化</h3>
+              <p>面数简化里最常见的工程基线是 Garland &amp; Heckbert 1997 年的 Quadric Error Metrics。源码后处理使用 pymeshlab 的 <code class="inline">meshing_decimation_quadric_edge_collapse</code>，就是这一类 quadric edge collapse 思路。</p>
+            </article>
+            <article class="mini-card">
+              <h3>8. UV / texture mapping</h3>
+              <p>纹理映射是经典图形学问题，早期可追溯到 Edwin Catmull 1974 年的 texture mapping 工作；Hunyuan3D 工程上用 <code class="inline">xatlas</code> 做 UV atlas 参数化。</p>
+            </article>
+            <article class="mini-card">
+              <h3>9. 可微/神经渲染与投影烘焙</h3>
+              <p>把 mesh 从多个相机视角渲染 normal/position，再反投影到 UV，是经典 rendering + texture baking。神经网络时代的可微渲染代表包括 Neural Mesh Renderer、Soft Rasterizer、nvdiffrast 等。Hunyuan3D 这里主要把渲染器作为纹理生成的几何条件和投影工具。</p>
+            </article>
+            <article class="mini-card">
+              <h3>10. 多视角条件扩散纹理</h3>
+              <p>多视角纹理生成继承了图像 diffusion / latent diffusion 的生成能力，同时用 normal map、position map、camera_info 做空间控制。这个设计思路接近 ControlNet / 条件扩散：Zhang、Rao、Agrawala 在 2023 年提出 ControlNet，把边缘、深度、姿态等条件注入扩散模型。</p>
+            </article>
+          </div>
+
+          <div class="callout">最短记忆法：<strong>DiT/flow 负责“想出一个 3D latent”；ShapeVAE + geo decoder 负责“把 latent 变成 3D 标量场”；Marching Cubes 负责“从场里抽 mesh”；xatlas/render/bake/inpaint/多视角 diffusion 负责“给 mesh 穿衣服”。</strong></div>
+          <div class="refs">参考源码：<code class="inline">/root/Hunyuan3D-2</code> commit <code class="inline">f8db630</code>；<code class="inline">minimal_demo.py:15-33</code>、<code class="inline">hy3dgen/shapegen/pipelines.py:473-488</code>、<code class="inline">hy3dgen/shapegen/pipelines.py:713-770</code>、<code class="inline">hy3dgen/shapegen/models/denoisers/hunyuan3ddit.py:284-410</code>、<code class="inline">hy3dgen/shapegen/models/autoencoders/model.py:171-176</code>、<code class="inline">hy3dgen/shapegen/models/autoencoders/model.py:279-298</code>、<code class="inline">hy3dgen/shapegen/models/autoencoders/volume_decoders.py:141-182</code>、<code class="inline">hy3dgen/shapegen/models/autoencoders/surface_extractors.py:67-99</code>、<code class="inline">hy3dgen/shapegen/postprocessors.py:37-51</code>、<code class="inline">hy3dgen/texgen/pipelines.py:189-240</code>、<code class="inline">hy3dgen/texgen/utils/uv_warp_utils.py:19-31</code>、<code class="inline">hy3dgen/texgen/utils/multiview_utils.py:25-86</code>、<code class="inline">hy3dgen/texgen/differentiable_renderer/mesh_render.py:653-823</code>。历史脉络参考：VAE（Kingma &amp; Welling, 2013）、Latent Diffusion（Rombach et al., 2021/2022）、DiT（Peebles &amp; Xie, 2022/2023）、Flow Matching（Lipman et al., 2022/2023）、Marching Cubes（Lorensen &amp; Cline, 1987）、QEM mesh simplification（Garland &amp; Heckbert, 1997）、ControlNet（Zhang, Rao &amp; Agrawala, 2023）。</div>

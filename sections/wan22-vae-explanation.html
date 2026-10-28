@@ -1,10 +1,49 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">WAN4</div><h2>VAE 是什么，在 Wan2.2 里负责什么</h2></div>
+          <p><strong>VAE</strong> 全称 Variational Autoencoder，直观上是一个“视频压缩器 + 视频解压器”。在视频生成模型里，它的重点不是聊天，也不是理解 prompt，而是把像素视频和 latent 表示互相转换。</p>
+          <div class="callout"><strong>一句话：</strong>VAE 的 encoder 把视频压缩成 latent，decoder 把 latent 还原成视频。Wan2.2 的 DiT 主模型只负责生成/修正 latent，真正输出像素帧靠 VAE decoder。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. Encoder：视频 → latent</h3>
+              <p>训练或图生视频条件处理时，encoder 可以把输入视频/图像条件压进 latent 空间。源码接口是 <code class="inline">Wan2_2_VAE.encode(videos)</code>，内部调用 <code class="inline">self.model.encode(...)</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>2. Decoder：latent → 视频</h3>
+              <p>文生视频推理的最后一步主要用 decoder。<code class="inline">WanT2V.generate()</code> 结束 denoising 后调用 <code class="inline">self.vae.decode(x0)</code>，把模型生成的 latent 变成视频帧。</p>
+            </article>
+            <article class="mini-card">
+              <h3>3. 为什么叫“变分”</h3>
+              <p>VAE 训练时通常让 encoder 学一个连续潜变量分布，并约束 latent 空间平滑可采样。对生成模型来说，这种连续 latent 空间更适合扩散模型逐步去噪，而不是离散地逐像素生成。</p>
+            </article>
+            <article class="mini-card">
+              <h3>4. Wan2.2 VAE 的视频特征</h3>
+              <p><code class="inline">vae2_2.py</code> 不是普通 2D 图片 autoencoder，而是视频 VAE：有 <code class="inline">CausalConv3d</code>、<code class="inline">downsample3d</code>、<code class="inline">upsample3d</code>、ResidualBlock，并带时间维缓存逻辑，服务于视频时序建模。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>Wan2.2 里 VAE 的位置可以这样记：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>输入端。</strong>如果任务有图片/视频条件，VAE encoder 可把条件内容变成 latent 条件，让模型沿着输入主体、构图或首帧继续生成。</div>
+            <div class="flow-step" data-step="2"><strong>生成中。</strong>WanModel 不直接处理 RGB 帧，而是处理 VAE latent。这样序列更短，显存和算力压力更低。</div>
+            <div class="flow-step" data-step="3"><strong>输出端。</strong>采样后的 latent 还不能直接播放，必须经过 VAE decoder 还原成像素视频。</div>
+          </div>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Wan2.1 VAE vs Wan2.2 VAE</h3>
+              <p>A14B T2V/I2V 配置使用 <code class="inline">Wan2.1_VAE.pth</code>，<code class="inline">vae_stride=(4,8,8)</code>。TI2V-5B 配置使用 <code class="inline">Wan2.2_VAE.pth</code>，<code class="inline">vae_stride=(4,16,16)</code>，空间压缩更强，所以更适合降低 720P 推理成本。</p>
+            </article>
+            <article class="mini-card">
+              <h3>VAE 会不会理解 prompt</h3>
+              <p>不会。prompt 理解主要由 T5 和 WanModel 的 cross-attention 完成。VAE 更像编解码器：它决定 latent 和像素之间如何互译，影响清晰度、纹理、时序一致性和压缩损失。</p>
+            </article>
+          </div>
+
+          <pre><code>VAE 在 Wan2.2 里的角色：
+像素视频 --encode--> video latent --WanModel denoise--> clean latent --decode--> 像素视频
+
+文生视频时：通常从随机 latent 开始，最后重点用 decode。
+图生/文图生视频时：还会把输入图像/条件编码进 latent 或条件分支。</code></pre>
+
+          <div class="callout">最短总结：<strong>VAE 是视频生成模型的“像素接口层”。</strong>没有它，DiT 要直接在巨大像素空间生成；有了它，DiT 可以在更小、更连续的 latent 空间里工作。</div>
+          <div class="refs">参考源码：<code class="inline">/root/Wan2.2/wan/modules/vae2_2.py:17-169</code>、<code class="inline">/root/Wan2.2/wan/modules/vae2_2.py:888-1051</code>、<code class="inline">/root/Wan2.2/wan/modules/vae2_1.py:619-779</code>、<code class="inline">/root/Wan2.2/wan/text2video.py:367-368</code>、<code class="inline">/root/Wan2.2/wan/configs/wan_t2v_A14B.py:15-18</code>、<code class="inline">/root/Wan2.2/wan/configs/wan_ti2v_5B.py:15-17</code>。</div>

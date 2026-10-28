@@ -1,10 +1,89 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">31</div><h2>MinT 平台支不支持多卡训练和 DeepSpeed ZeRO-3</h2></div>
+          <p>先把结论说清楚：<strong>从我们服务器当前使用到的 MinT SDK 和训练脚本看，MinT 是远程托管式 LoRA 训练 API；调用侧没有暴露“指定几张 GPU / torchrun / DeepSpeed ZeRO-3 / ZeRO offload”的配置入口。</strong>它后端内部可能有自己的多卡调度，但在当前代码里，用户不能像本地 DeepSpeed 那样直接控制 ZeRO stage、device mapping、optimizer shard 或 NCCL 分布式启动。</p>
+
+          <div class="callout"><strong>一句话：</strong>MinT 适合“我把数据、loss、优化步交给远程训练服务”；DeepSpeed ZeRO-3 适合“我自己掌控本地/集群多卡训练的显存切分和分布式策略”。这两层不是同一个控制面。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>1. 当前 MinT 脚本实际暴露了什么</h3>
+              <p><code class="inline">/root/rlhf/mint_simple_training/simple_mint_sft.py</code> 里创建的是 LoRA training client：</p>
+              <pre><code>service_client = mint.ServiceClient()
+training_client = service_client.create_lora_training_client(
+    base_model=BASE_MODEL,
+    rank=16,
+    train_mlp=True,
+    train_attn=True,
+    train_unembed=True,
+)
+
+fb_future = training_client.forward_backward(data, loss_fn="cross_entropy")
+optim_future = training_client.optim_step(types.AdamParams(learning_rate=5e-5))</code></pre>
+              <p>这里能控制的是基座模型、LoRA rank、训练哪些模块、数据、loss_fn 和 optimizer step。没有看到 <code class="inline">num_gpus</code>、<code class="inline">deepspeed_config</code>、<code class="inline">zero_stage</code>、<code class="inline">torchrun</code> 这类入口。</p>
+            </article>
+
+            <article class="mini-card">
+              <h3>2. FastApply GRPO 复刻也是同一类 API</h3>
+              <p><code class="inline">/root/rlhf/fastapply_pipeline/train_mint_fastapply_grpo.py</code> 里也是先拿远程 training client，再把 GRPO 构造出的 datums 交给 MinT：</p>
+              <pre><code>training_client = service_client.create_lora_training_client(
+    base_model=BASE_MODEL,
+    rank=16,
+    train_mlp=True,
+    train_attn=True,
+    train_unembed=True,
+)
+
+fb_result = training_client.forward_backward(
+    datums,
+    loss_fn="importance_sampling",
+).result(timeout=1500)
+optim_result = training_client.optim_step(
+    types.AdamParams(learning_rate=args.learning_rate),
+).result(timeout=1500)</code></pre>
+              <p>也就是说，GRPO 的 rollout、reward、advantage 可以在应用侧组织，但真正反传和优化步仍然是通过 MinT 的远程训练原语完成。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>3. 那 DeepSpeed ZeRO-3 在哪里出现了？</h3>
+          <p>服务器里确实有一个和 RL 训练相关的本地/集群配置：<code class="inline">/root/rlhf/rl_master/configs/config-rl-fastapply.yaml</code>。它写的是 <code class="inline">deepspeed_train</code> 策略，而不是 MinT API：</p>
+          <pre><code>actor_train:
+  training_args:
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 64
+    strategy_name: deepspeed_train
+    strategy_config: ${deepspeed_zero3_cpuoffload}
+    device_mapping: list(range(0,4))
+  strategy_name: deepspeed_train
+  offload: true</code></pre>
+          <p>这说明：如果你要的是<strong>明确的多卡训练、ZeRO-3、CPU offload、device_mapping</strong>，方向应该是本地 RL-master / DeepSpeed / FSDP 训练栈，而不是当前这套 MinT SDK 调用方式。注意：当前 checkout 里引用的 DeepSpeed 默认配置文件没有完整展开，所以这里能证明的是“RL-master 有 DeepSpeed 训练策略意图”，不是“MinT 暴露了 ZeRO-3”。</p>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>MinT API 控制面</h3>
+              <ul>
+                <li>控制 <code class="inline">base_model</code>、<code class="inline">rank</code>、<code class="inline">train_mlp/train_attn/train_unembed</code>。</li>
+                <li>控制数据构造、loss 类型、采样与优化步。</li>
+                <li>不在调用侧控制 GPU 数、ZeRO stage、DeepSpeed JSON、NCCL、进程组。</li>
+                <li>更像“远程训练服务 + LoRA/RL 原语”。</li>
+              </ul>
+            </article>
+            <article class="mini-card">
+              <h3>DeepSpeed ZeRO-3 控制面</h3>
+              <ul>
+                <li>自己用 <code class="inline">torchrun</code> / <code class="inline">deepspeed</code> 启动多进程。</li>
+                <li>配置 ZeRO-2/ZeRO-3、optimizer state shard、parameter shard、gradient shard。</li>
+                <li>可做 CPU/NVMe offload、gradient checkpointing、显存预算控制。</li>
+                <li>适合大模型全参/大 LoRA/严格显存可控训练。</li>
+              </ul>
+            </article>
+          </div>
+
+          <h3>4. 具体怎么选</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>只是做小规模 LoRA、SFT、GRPO smoke：</strong>优先 MinT。代码短，服务端处理训练执行，开发者主要关心数据、reward、loss。</div>
+            <div class="flow-step" data-step="2"><strong>要确定使用 4 卡/8 卡、ZeRO-3、CPU offload：</strong>不要假设 MinT 能配；应走 RL-master / DeepSpeed / Accelerate / FSDP 路线。</div>
+            <div class="flow-step" data-step="3"><strong>要训练全参或大模型显存卡住：</strong>ZeRO-3 的价值才明显，因为它把参数、梯度、优化器状态切到多卡上。</div>
+            <div class="flow-step" data-step="4"><strong>如果未来 MinT 官方 SDK 增加分布式参数：</strong>需要重新看 API 签名和文档；但当前本地源码证据里没有这个入口。</div>
+          </div>
+
+          <div class="callout">最终答案：<strong>当前我们使用的 MinT 平台调用方式，不支持用户显式配置多卡训练和 DeepSpeed ZeRO-3。</strong>更严谨地说，是“API 调用侧没有暴露 ZeRO-3/多卡控制”。如果你要 ZeRO-3，就切到本地 DeepSpeed/RL-master 训练栈；如果你接受服务端托管训练细节，就用 MinT。</div>
+          <div class="refs">参考：<code class="inline">/root/rlhf/mint_simple_training/simple_mint_sft.py</code>、<code class="inline">/root/rlhf/fastapply_pipeline/train_mint_fastapply_grpo.py</code>、<code class="inline">/root/rlhf/rl_master/configs/config-rl-fastapply.yaml</code>。</div>

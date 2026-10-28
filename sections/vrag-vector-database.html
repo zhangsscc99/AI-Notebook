@@ -1,10 +1,25 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">VRAG6</div><h2>VRAG 用的向量数据库是什么</h2></div>
+          <p>源码里没有接 Milvus、Qdrant、Weaviate、Elasticsearch dense vector 这类独立向量数据库。它用的是<strong>本地 FAISS 索引</strong>。</p>
+          <div class="callout"><strong>准确说：</strong>VRAG 用 FAISS 做向量索引，不是一个带服务端、权限、多租户、过滤表达式的完整向量数据库。它把 FAISS index 文件和 metadata JSONL 文件放在本地磁盘。</div>
+
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>索引类型</h3>
+              <p><code class="inline">SearchEngine.build_index()</code> 新建索引时用 <code class="inline">faiss.IndexFlatIP(self.dimension)</code>。Flat 表示不做 IVF/HNSW/PQ 压缩近似，IP 表示 inner product 相似度。</p>
+            </article>
+            <article class="mini-card">
+              <h3>索引文件</h3>
+              <p>索引保存为 <code class="inline">{model_name}_faiss_index.bin</code>，通过 <code class="inline">faiss.write_index()</code> 写入，通过 <code class="inline">faiss.read_index()</code> 加载。</p>
+            </article>
+            <article class="mini-card">
+              <h3>元数据文件</h3>
+              <p>每条向量对应的文件信息写入 <code class="inline">{model_name}_file_data_list.jsonl</code>，包含 <code class="inline">type</code>、<code class="inline">file_path</code>、文本 <code class="inline">content</code> 等。</p>
+            </article>
+            <article class="mini-card">
+              <h3>多索引合并</h3>
+              <p><code class="inline">load_multi_index_corpus_together()</code> 可以加载多个 index 目录，用 <code class="inline">self.index.merge_from(...)</code> 合并 FAISS index，同时 extend metadata。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <p>所以它更像一个轻量本地检索引擎：FAISS 负责向量近邻搜索，FastAPI 负责把它包装成 <code class="inline">/search</code> 服务。</p>
+          <div class="refs">参考：<code class="inline">/root/VRAG/search_engine/search_engine.py:52-88</code>、<code class="inline">/root/VRAG/search_engine/search_engine.py:90-105</code>、<code class="inline">/root/VRAG/search_engine/search_engine.py:256-276</code>。</div>

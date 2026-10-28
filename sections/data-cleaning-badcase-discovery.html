@@ -1,10 +1,120 @@
-<div class="section-header"><div class="index">DH1</div><h2>DeepSeek Harness 是什么，解决什么问题</h2></div>
-          <p>DeepSeek Harness（命令行入口为 <code class="inline">dsh</code>）是 DeepSeek AI 开源的 agent harness（智能体运行框架）。它不是单独的聊天模型，而是一层把<strong>模型、工具、会话、权限、工作区、子 agent 和运行时</strong>组织起来的工程基础设施。</p>
-          <div class="callout"><strong>一句话：</strong>DeepSeek Harness 关注的是“如何让模型可靠地完成多轮任务”，包括工具调用、状态持久化、错误恢复、插件扩展和程序化接入，而不只是生成一段文本。</div>
+<div class="section-header"><div class="index">DCT2</div><h2>badcase 是怎么找到的，项目里提供了哪些技巧技术</h2></div>
+          <p>Data-Juicer 里 badcase 发现主要体现在 <strong>Agent 交互数据质量分析</strong>这条 demo pipeline：<code class="inline">demos/agent/agent_interaction_quality_analysis.yaml</code>。它不是只靠一个“用户不满意”标签，而是把工具调用、token 成本、延迟、LLM 质量评分、对话质量、轨迹连贯性等多源信号融合成一个保守的 badcase tier。</p>
+          <div class="callout"><strong>一句话：</strong>badcase 是通过“规范化 Agent 轨迹 → 统计工具/成本/质量信号 → 多个 LLM/规则质检算子打分 → agent_bad_case_signal_mapper 融合信号 → high_precision/watchlist/none 分层 → 报告和切片脚本辅助人工复核”找到的。</div>
+
+          <h3>1. 先把 Agent 数据规范化，否则 badcase 会误判</h3>
+          <p>Agent 数据不是普通问答，经常是：</p>
+          <pre><code>user
+  → assistant(tool_calls)
+  → tool
+  → assistant
+  → tool
+  → assistant final</code></pre>
+          <p><code class="inline">agent_dialog_normalize_mapper</code> 会把 <code class="inline">messages</code> / <code class="inline">choices</code> 规范化成 <code class="inline">text</code>、<code class="inline">dialog_history</code>、<code class="inline">query</code>、<code class="inline">response</code>，还会写入血缘字段，例如 <code class="inline">agent_request_model</code>、<code class="inline">agent_pt</code>、<code class="inline">agent_total_cost_time_ms</code>。</p>
+          <p>这一步很关键。否则下游 LLM 评估可能只看到最后一小段 assistant 文本，误以为模型“没干活”或“答非所问”。</p>
+
+          <h3>2. badcase 信号来源有哪些</h3>
           <div class="grid-2">
-            <article class="mini-card"><h3>给模型一个可执行的外壳</h3><p>Harness 为模型提供文件系统、Shell、代码运行、Web、LSP、MCP、子 agent 等能力，并把调用结果重新送回 agent loop。模型负责提出下一步，运行时负责真正执行、校验和回填。</p></article>
-            <article class="mini-card"><h3>把长任务变成可恢复会话</h3><p>会话、目标、上下文、工具结果和 checkpoint 可以被保存与恢复。即使进程重启或任务暂时中断，也能从结构化状态继续，而不是只依赖一段聊天历史。</p></article>
-            <article class="mini-card"><h3>让能力可以替换</h3><p>不同模型提供方、Shell 执行器、沙箱、存储后端和 Web/API 接入都可以作为能力模块替换。产品逻辑不必绑定某一个具体实现。</p></article>
-            <article class="mini-card"><h3>面向开发者预览</h3><p>仓库当前仍是 Developer Preview，接口和行为可能发生破坏性变化。适合研究 agent runtime、插件系统和编码 agent，不应默认当作已经稳定的长期兼容平台。</p></article>
+            <article class="mini-card">
+              <h3>工具调用失败</h3>
+              <p><code class="inline">tool_success_tagger_mapper</code> 统计 <code class="inline">tool_success_count</code>、<code class="inline">tool_fail_count</code>、<code class="inline">tool_success_ratio</code>。如果工具返回 error、No such file、失败模式，就会成为强证据或中等证据。</p>
+            </article>
+            <article class="mini-card">
+              <h3>token 成本和延迟异常</h3>
+              <p><code class="inline">usage_counter_mapper</code> 统计 prompt/completion/total tokens；normalize 写入 total_cost_time。过高 token 或过高 latency 会成为 watchlist 信号，特别适合发现“绕圈、冗长、成本爆炸”的样本。</p>
+            </article>
+            <article class="mini-card">
+              <h3>LLM 综合质量低</h3>
+              <p><code class="inline">llm_analysis_filter</code> 和 <code class="inline">llm_quality_score_filter</code> 产生分数和 recommendation。如果是低分并且 recommendation 是 discard，会触发 <code class="inline">llm_agent_analysis_eval_low</code> 或 <code class="inline">llm_reply_quality_eval_low</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>对话/轨迹质量低</h3>
+              <p>多个 dialog/agent mapper 会给 1–5 分：记忆一致性、指代消解、话题漂移、错误恢复、澄清质量、主动性、非重复性、轨迹连贯性、工具任务相关性。低分轴会触发 <code class="inline">dialog_turn_quality_meta_low</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>负面情绪和用户不满</h3>
+              <p><code class="inline">dialog_sentiment_detection_mapper</code> 可以提供负面情绪标签。但项目文档强调不强依赖用户不满意单一视角，因为这类信号噪声大，只适合作为弱证据。</p>
+            </article>
+            <article class="mini-card">
+              <h3>高困惑度和长 query 短回复</h3>
+              <p>可选用 <code class="inline">perplexity_filter</code> 的 <code class="inline">stats.perplexity</code>，也有“长 query + 极短 response”的启发式，用于发现乱码、异常回复、空回复、敷衍回复。</p>
+            </article>
           </div>
-          <div class="refs">事实来源：<code class="inline">README.zh.md</code>、<code class="inline">packages/</code> 目录与仓库文档。项目许可证为 MIT。</div>
+
+          <h3>3. agent_bad_case_signal_mapper 怎么融合信号</h3>
+          <p>核心源码是 <code class="inline">data_juicer/ops/mapper/agent_bad_case_signal_mapper.py</code>。它读取上游写入的 <code class="inline">meta</code> 和 <code class="inline">stats</code>，输出两个字段：</p>
+          <pre><code>meta.agent_bad_case_signals = [
+  {"code": "tool_message_error_pattern", "detail": "tool_fail_count=2", "weight": "high"},
+  {"code": "high_token_usage", "detail": "total_tokens=...", "weight": "medium"}
+]
+
+meta.agent_bad_case_tier = "high_precision" | "watchlist" | "none"</code></pre>
+          <p>它的设计目标是 <strong>precision over recall</strong>：强怀疑档宁可少抓一点，也要证据更硬。默认逻辑大概是：</p>
+          <ul>
+            <li><strong>high_precision：</strong>工具失败强证据，或 LLM 低分且 discard 的强证据。</li>
+            <li><strong>watchlist：</strong>中等证据达到数量，或单个中等证据需要观察。</li>
+            <li><strong>none：</strong>没有明显坏样本信号。</li>
+          </ul>
+
+          <h3>4. 项目提供的具体 badcase 技巧</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>技巧 1：硬证据优先</h3>
+              <p>优先看工具 error pattern、tool fail count、LLM discard + 极低分。这些比“用户语气不爽”更可靠。</p>
+            </article>
+            <article class="mini-card">
+              <h3>技巧 2：单次工具失败不要立刻判死</h3>
+              <p>Agent 常常先试错再修正，所以配置里有 <code class="inline">min_tool_fail_count_for_signal</code>、<code class="inline">high_precision_on_tool_fail_alone</code>，避免把探索性失败误判成坏样本。</p>
+            </article>
+            <article class="mini-card">
+              <h3>技巧 3：多弱证据 AND 更稳</h3>
+              <p>文档建议优先组合多条独立证据，例如低工具成功率 + 高 token + 低对话质量，而不是单一弱信号就判坏。</p>
+            </article>
+            <article class="mini-card">
+              <h3>技巧 4：P90/P95 分位数自动校准</h3>
+              <p><code class="inline">compute_percentile_thresholds.py</code> 可以按 <code class="inline">agent_request_model</code> 计算 token、延迟、perplexity 的 P90/P95，并写成 calibration JSON，供 <code class="inline">agent_bad_case_signal_mapper</code> 自动合并阈值。</p>
+            </article>
+            <article class="mini-card">
+              <h3>技巧 5：按模型/时间桶 cohort 对比</h3>
+              <p>normalize 写入 <code class="inline">agent_request_model</code> 和 <code class="inline">agent_pt</code>，后处理脚本 <code class="inline">analyze_bad_case_cohorts.py</code> 可以按模型、时间桶、tier 汇总，定位哪个模型或版本 badcase 比例异常。</p>
+            </article>
+            <article class="mini-card">
+              <h3>技巧 6：slice 出高优先级样本人工复核</h3>
+              <p><code class="inline">slice_export_by_tier.py</code> 可以导出 <code class="inline">high_precision</code> 或 <code class="inline">watchlist</code> 子集，给人工复核或二次标注。</p>
+            </article>
+            <article class="mini-card">
+              <h3>技巧 7：HTML 报告和字段归因</h3>
+              <p><code class="inline">generate_bad_case_report.py</code> 会生成单页 HTML，展示 tier、信号、字段归因表、cohort 图、case study，帮助你从“发现坏样本”走到“解释为什么坏”。</p>
+            </article>
+            <article class="mini-card">
+              <h3>技巧 8：LLM insight 只跑高风险样本</h3>
+              <p><code class="inline">agent_insight_llm_mapper</code> 可选地只对 <code class="inline">high_precision</code> / <code class="inline">watchlist</code> 样本跑 LLM 总结，输出 root causes、human review priority、viz facets，控制成本。</p>
+            </article>
+          </div>
+
+          <h3>5. 一条 badcase 发现流程怎么跑</h3>
+          <pre><code>原始 Agent JSONL
+  → agent_dialog_normalize_mapper 规范化 messages / choices
+  → pii_redaction_mapper / pii_llm_suspect_mapper 脱敏与隐私检查
+  → clean_html_mapper / clean_copyright_mapper 基础清洗
+  → dialog_* mapper 做意图、情绪、话题、质量打分
+  → usage_counter_mapper 统计 token
+  → tool_success_tagger_mapper 统计工具成功/失败
+  → llm_analysis_filter / llm_quality_score_filter 打质量分
+  → agent_bad_case_signal_mapper 融合信号并分层
+  → agent_insight_llm_mapper 可选生成根因洞察
+  → verify / compute_percentile / cohort / slice / HTML report 后处理</code></pre>
+
+          <h3>6. 它能发现哪些典型 badcase</h3>
+          <ul>
+            <li><strong>工具失败型：</strong>工具多次报错、路径不存在、API 调用失败、工具成功率过低。</li>
+            <li><strong>空回复/敷衍型：</strong>用户 query 很长，但最终 response 极短或为空。</li>
+            <li><strong>成本异常型：</strong>token 使用异常高、延迟异常高，可能是循环调用或冗长推理。</li>
+            <li><strong>质量低型：</strong>LLM 评分低且建议 discard。</li>
+            <li><strong>对话能力差型：</strong>记忆不一致、指代没解析、话题漂移、错误恢复差、主动性差、重复啰嗦。</li>
+            <li><strong>工具不相关型：</strong>工具调用和用户任务不匹配，Agent 看似行动了但方向错。</li>
+            <li><strong>安全/隐私型：</strong>PII 残留、敏感信息疑似泄露、NSFW/水印等多模态安全问题。</li>
+          </ul>
+
+          <div class="callout">结论：Data-Juicer 找 badcase 的关键不是一个神奇模型，而是<strong>多源信号工程</strong>：规则信号抓硬错误，LLM/VLM 信号抓语义质量，分位数校准抓异常成本，cohort 分析抓模型/版本漂移，HTML 报告帮助人工复核。</div>
+          <div class="refs">参考源码/文档：<code class="inline">/root/data-juicer</code> commit <code class="inline">29ada7c</code>；<code class="inline">demos/agent/BAD_CASE_INSIGHTS.md</code>、<code class="inline">demos/agent/agent_interaction_quality_analysis.yaml</code>、<code class="inline">data_juicer/ops/mapper/agent_bad_case_signal_mapper.py</code>、<code class="inline">data_juicer/ops/mapper/agent_insight_llm_mapper.py</code>、<code class="inline">demos/agent/scripts/README.md</code>、<code class="inline">docs/Operators.md</code>。</div>
