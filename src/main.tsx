@@ -6,13 +6,16 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { RouterProvider } from "./router";
+import { ProficiencyProvider } from "./context/ProficiencyContext";
 import "./styles/app.css";
 import "./styles/article.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <RouterProvider>
-      <App />
+      <ProficiencyProvider>
+        <App />
+      </ProficiencyProvider>
     </RouterProvider>
   </StrictMode>,
 );

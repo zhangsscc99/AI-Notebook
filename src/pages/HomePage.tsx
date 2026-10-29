@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { catalog, sectionById, sectionsByGroup } from "../lib/catalog";
 import { preloadArticle } from "../lib/articles";
 import { ArrowIcon, CommandIcon, SearchIcon } from "../components/Icons";
+import { ProficiencyTag } from "../components/Proficiency";
 import { useSearch } from "../context/SearchContext";
 import { Link } from "../router";
 
@@ -97,7 +98,8 @@ export default function HomePage() {
               <span className="new-note__group">{section.groupTitle}</span>
               <strong>{section.title}</strong>
               <span className="new-note__meta">
-                {section.readingMinutes} min read
+                <span>{section.readingMinutes} min read</span>
+                <ProficiencyTag sectionId={section.id} compact />
                 <ArrowIcon />
               </span>
             </Link>
@@ -147,6 +149,7 @@ export default function HomePage() {
                     >
                       <span>{String(section.order).padStart(2, "0")}</span>
                       <span>{section.menuTitle}</span>
+                      <ProficiencyTag sectionId={section.id} compact />
                       <ArrowIcon />
                     </Link>
                   ))}

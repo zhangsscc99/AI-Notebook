@@ -141,6 +141,108 @@
   height: 17px;
 }
 
+.article-actions>.proficiency-tag {
+  margin-right: auto;
+}
+
+.proficiency-panel {
+  margin-top: 24px;
+  padding: 17px 18px 16px;
+  border: 1px solid var(--line);
+  background: rgba(247, 242, 230, 0.45);
+}
+
+.proficiency-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.proficiency-panel__eyebrow {
+  margin: 0 0 3px;
+  color: #777b71;
+  font-family: var(--mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.12em;
+}
+
+.proficiency-panel h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.45rem;
+  font-weight: 480;
+  letter-spacing: -0.025em;
+}
+
+.proficiency-panel__help {
+  margin: 9px 0 13px;
+  color: #676d65;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  line-height: 1.6;
+}
+
+.proficiency-scale {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.proficiency-scale__button {
+  display: grid;
+  min-width: 0;
+  height: 34px;
+  padding: 0;
+  place-items: center;
+  color: var(--score-fg);
+  border: 1px solid var(--score-border);
+  background: var(--score-bg);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.proficiency-scale__button:hover {
+  z-index: 2;
+  transform: translateY(-3px);
+}
+
+.proficiency-scale__button[aria-pressed="true"] {
+  z-index: 3;
+  box-shadow:
+    0 0 0 2px var(--paper-light),
+    0 0 0 4px var(--orange);
+  transform: translateY(-2px);
+}
+
+.proficiency-panel__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin-top: 12px;
+  color: #73786f;
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+}
+
+.proficiency-panel__legend button {
+  margin-left: auto;
+  padding: 4px 0;
+  color: var(--rust);
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  cursor: pointer;
+}
+
 .article-content {
   width: min(860px, 100%);
   margin: 0 auto;
@@ -654,6 +756,30 @@
 
   .article-header__meta span+span::before {
     margin-right: 8px;
+  }
+
+  .proficiency-panel {
+    padding: 14px;
+  }
+
+  .proficiency-panel__header {
+    align-items: center;
+  }
+
+  .proficiency-panel h2 {
+    font-size: 1.25rem;
+  }
+
+  .proficiency-scale {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .proficiency-scale__button {
+    height: 37px;
+  }
+
+  .proficiency-panel__legend button {
+    margin-left: 0;
   }
 
   .article-content {

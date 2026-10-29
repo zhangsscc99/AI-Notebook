@@ -356,7 +356,7 @@ kbd {
 
 .topic-link {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr) auto;
   gap: 5px;
   padding: 7px 18px 7px 28px;
   color: #89968c;
@@ -369,11 +369,11 @@ kbd {
     background 120ms ease;
 }
 
-.topic-link span:first-child {
+.topic-link>span:first-child {
   color: #59665d;
 }
 
-.topic-link span:last-child {
+.topic-link>span:nth-child(2) {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
@@ -391,7 +391,7 @@ kbd {
   background: var(--acid);
 }
 
-.topic-link.is-active span {
+.topic-link.is-active>span {
   color: var(--ink);
 }
 
@@ -716,6 +716,10 @@ kbd {
   height: 17px;
 }
 
+.new-note__meta .proficiency-tag {
+  margin-left: auto;
+}
+
 .new-note:hover .new-note__group,
 .new-note:hover .new-note__meta {
   color: #abb5ac;
@@ -838,7 +842,7 @@ kbd {
 
 .atlas-card__links a {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 16px;
+  grid-template-columns: 22px minmax(0, 1fr) auto 16px;
   gap: 8px;
   align-items: center;
   padding: 8px 0;
@@ -971,7 +975,7 @@ kbd {
 .search-result {
   display: grid;
   width: 100%;
-  grid-template-columns: 32px minmax(0, 1fr) 22px;
+  grid-template-columns: 32px minmax(0, 1fr) auto 22px;
   gap: 12px;
   align-items: center;
   padding: 14px 18px;
@@ -1072,6 +1076,128 @@ kbd {
   background: var(--acid);
   font-family: var(--mono);
   font-size: 0.63rem;
+}
+
+.proficiency-tag,
+.proficiency-scale__button {
+  --score-bg: transparent;
+  --score-fg: #686e67;
+  --score-border: #9b9d92;
+}
+
+.proficiency-tag[data-score="1"],
+.proficiency-scale__button[data-score="1"] {
+  --score-bg: #ffffff;
+  --score-fg: #111915;
+  --score-border: #a6a79d;
+}
+
+.proficiency-tag[data-score="2"],
+.proficiency-scale__button[data-score="2"] {
+  --score-bg: #f1f1ed;
+  --score-fg: #111915;
+  --score-border: #999b91;
+}
+
+.proficiency-tag[data-score="3"],
+.proficiency-scale__button[data-score="3"] {
+  --score-bg: #dedfd9;
+  --score-fg: #141914;
+  --score-border: #85897f;
+}
+
+.proficiency-tag[data-score="4"],
+.proficiency-scale__button[data-score="4"] {
+  --score-bg: #c7cac1;
+  --score-fg: #101510;
+  --score-border: #777c71;
+}
+
+.proficiency-tag[data-score="5"],
+.proficiency-scale__button[data-score="5"] {
+  --score-bg: #aeb2a8;
+  --score-fg: #0d120e;
+  --score-border: #656b61;
+}
+
+.proficiency-tag[data-score="6"],
+.proficiency-scale__button[data-score="6"] {
+  --score-bg: #8b9087;
+  --score-fg: #080b09;
+  --score-border: #565c53;
+}
+
+.proficiency-tag[data-score="7"],
+.proficiency-scale__button[data-score="7"] {
+  --score-bg: #676d65;
+  --score-fg: #ffffff;
+  --score-border: #4b514a;
+}
+
+.proficiency-tag[data-score="8"],
+.proficiency-scale__button[data-score="8"] {
+  --score-bg: #424842;
+  --score-fg: #ffffff;
+  --score-border: #353b36;
+}
+
+.proficiency-tag[data-score="9"],
+.proficiency-scale__button[data-score="9"] {
+  --score-bg: #222822;
+  --score-fg: #ffffff;
+  --score-border: #171d18;
+}
+
+.proficiency-tag[data-score="10"],
+.proficiency-scale__button[data-score="10"] {
+  --score-bg: #050805;
+  --score-fg: #ffffff;
+  --score-border: #050805;
+}
+
+.proficiency-tag {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 3px 8px;
+  color: var(--score-fg);
+  border: 1px dashed var(--score-border);
+  background: var(--score-bg);
+  font-family: var(--mono);
+  font-size: 0.56rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.proficiency-tag:not([data-score="unrated"]) {
+  border-style: solid;
+}
+
+.proficiency-tag strong {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.proficiency-tag.is-compact {
+  min-width: 24px;
+  min-height: 18px;
+  gap: 0;
+  padding: 1px 5px;
+  font-size: 0.55rem;
+}
+
+.proficiency-tag.is-compact strong {
+  font-size: 0.6rem;
+}
+
+.topic-link .proficiency-tag {
+  align-self: center;
+}
+
+.search-result.is-selected .proficiency-tag {
+  outline: 1px solid rgba(255, 255, 255, 0.25);
 }
 
 .empty-state-page {

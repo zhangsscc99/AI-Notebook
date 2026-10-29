@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowIcon, CopyIcon } from "../components/Icons";
+import {
+  ProficiencyPicker,
+  ProficiencyTag,
+} from "../components/Proficiency";
 import { useArticle } from "../hooks/useArticle";
 import { preloadArticle } from "../lib/articles";
 import {
@@ -116,6 +120,7 @@ export default function ArticlePage({ sectionId }: { sectionId: string }) {
           </aside>
         </div>
         <div className="article-actions">
+          <ProficiencyTag sectionId={section.id} />
           <button type="button" onClick={copyLink}>
             <CopyIcon />
             {copied ? "Link copied" : "Copy link"}
@@ -125,6 +130,7 @@ export default function ArticlePage({ sectionId }: { sectionId: string }) {
             Back to atlas
           </Link>
         </div>
+        <ProficiencyPicker sectionId={section.id} />
       </header>
 
       {article.status === "loading" ? <ArticleSkeleton /> : null}

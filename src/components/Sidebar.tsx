@@ -6,6 +6,8 @@ import {
 } from "../lib/catalog";
 import { ChevronIcon, CloseIcon, SearchIcon } from "./Icons";
 import { Link, useRouter } from "../router";
+import { ProficiencyTag } from "./Proficiency";
+import { useProficiency } from "../context/ProficiencyContext";
 
 interface SidebarProps {
   mobileOpen: boolean;
@@ -24,6 +26,7 @@ export default function Sidebar({
   openSearch,
 }: SidebarProps) {
   const { pathname } = useRouter();
+  const { ratedCount } = useProficiency();
   const activeSectionId = getActiveSectionId(pathname);
   const activeGroupId = activeSectionId
     ? sectionById.get(activeSectionId)?.groupId
@@ -87,7 +90,7 @@ export default function Sidebar({
 
         <div className="sidebar__meta">
           <span>{catalog.sections.length} field notes</span>
-          <span>{catalog.groups.length} research tracks</span>
+          <span>{ratedCount} rated</span>
         </div>
 
         <nav className="topic-nav" aria-label="Research tracks">
@@ -124,6 +127,7 @@ export default function Sidebar({
                       >
                         <span>{String(section.order).padStart(2, "0")}</span>
                         <span>{section.menuTitle}</span>
+                        <ProficiencyTag sectionId={section.id} compact />
                       </Link>
                     ))}
                   </div>

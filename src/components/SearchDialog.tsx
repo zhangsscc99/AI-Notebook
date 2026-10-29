@@ -9,6 +9,7 @@ import Fuse from "fuse.js";
 import type { SearchRecord } from "../types";
 import { ArrowIcon, CloseIcon, SearchIcon } from "./Icons";
 import { useRouter } from "../router";
+import { ProficiencyTag } from "./Proficiency";
 
 interface SearchDialogProps {
   open: boolean;
@@ -181,6 +182,7 @@ export default function SearchDialog({ open, onClose }: SearchDialogProps) {
                 <strong>{record.title}</strong>
                 <span>{record.excerpt}</span>
               </span>
+              <ProficiencyTag sectionId={record.id} compact />
               <ArrowIcon />
             </button>
           ))}
