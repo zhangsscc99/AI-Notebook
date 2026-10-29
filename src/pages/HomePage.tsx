@@ -35,7 +35,7 @@ export default function HomePage() {
           <div className="home-hero__actions">
             <button type="button" className="primary-action" onClick={openSearch}>
               <SearchIcon />
-              Search 192 notes
+              Search {catalog.sections.length} notes
               <kbd>⌘K</kbd>
             </button>
             <Link className="secondary-action" to="/section/claude-workflow-1">

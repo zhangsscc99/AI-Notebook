@@ -1,0 +1,88 @@
+<div class="section-header"><div class="index">C29</div><h2>Claude Code 上下文压缩入门：它压缩的到底是什么，何时触发？</h2></div>
+
+          <p>理解 Claude Code 的上下文压缩，先要放弃“上下文就是聊天记录”的想法。一次模型请求实际携带的内容通常包括系统提示、工具 schema、用户上下文、历史消息、工具调用与结果、文件附件、MCP 指令、计划和子 Agent 状态。所谓压缩，是把这一整组运行状态治理到模型窗口以内，同时尽量不破坏任务继续执行所需的协议。</p>
+
+          <div class="callout"><strong>一句话：</strong>Claude Code 的上下文压缩不是简单删聊天记录，而是一套按成本分层执行的 <strong>上下文操作系统</strong>：先清理最占空间的旧工具结果，再考虑裁剪或摘要历史；压缩完成后，还会把文件、计划、技能、工具和 hook 状态重新注入。</div>
+
+          <h3>为什么 coding agent 特别容易撑爆上下文</h3>
+          <p>编码任务产生的 token 主要不是来自用户写的几句话，而是来自工具观察：读取大文件、递归搜索、运行测试、编译日志、Git diff 和多次命令输出。每推进一轮，模型还会再次携带之前的历史，因此同一个工具结果可能在后续请求中重复计费。</p>
+
+          <div class="grid-2">
+            <article class="mini-card"><h3>固定成本</h3><p>系统提示、工具 schema、MCP 说明和 user/system context 在每轮都存在。它们决定即使消息不多，请求也有一个基础 token 成本。</p></article>
+            <article class="mini-card"><h3>可变成本</h3><p>聊天消息、tool_use、tool_result、文件附件和计划状态持续增长，其中旧工具结果通常最容易膨胀，也最适合优先清理。</p></article>
+            <article class="mini-card"><h3>协议成本</h3><p><code class="inline">tool_use</code> 与 <code class="inline">tool_result</code> 必须成对，thinking block 也有消息边界要求。压缩不能只追求 token 少，还必须保证 API 消息结构合法。</p></article>
+            <article class="mini-card"><h3>恢复成本</h3><p>摘要只能保留语义，不能自动恢复精确文件内容、当前 plan mode、已加载工具和子 Agent 状态，所以压缩后还要做运行时重建。</p></article>
+          </div>
+
+          <h3>压缩前的完整流水线</h3>
+          <p><code class="inline">query.ts</code> 在每一轮模型调用前，会逐步处理消息视图，而不是直接调用摘要：</p>
+          <div class="flow">
+            <div class="flow-step"><strong>1. Compact Boundary</strong><br><code class="inline">getMessagesAfterCompactBoundary()</code> 只投影最近一次压缩边界之后的有效历史。</div>
+            <div class="flow-step"><strong>2. Tool Result Budget</strong><br><code class="inline">applyToolResultBudget()</code> 限制工具结果的总上下文占用，大结果可被持久化并替换为预览引用。</div>
+            <div class="flow-step"><strong>3. Snip / Microcompact</strong><br>可选历史裁剪和工具结果清理。缓存热时尽量使用 cache editing；缓存冷后可直接清除旧结果内容。</div>
+            <div class="flow-step"><strong>4. Auto Compact</strong><br>只有 token 仍超过动态阈值时，才启动真正的 LLM conversation summary。</div>
+            <div class="flow-step"><strong>5. Rebuild Context</strong><br>压缩后用 boundary、summary、保留消息、文件与运行时 attachment、hook 结果重建下一轮上下文。</div>
+          </div>
+
+          <h3>第一层：先控制工具结果预算</h3>
+          <p><code class="inline">Tool.ts</code> 为工具声明 <code class="inline">maxResultSizeChars</code>，而 <code class="inline">toolResultStorage.ts</code> 在压缩前执行结果预算。超出阈值的内容可以被持久化到磁盘，上下文中只留下引用或摘要。这样做的意义是：文件读取和 Shell 输出还没进入 LLM 摘要阶段，就已经先失去大部分重复占用。</p>
+
+          <h3>第二层：microcompact 为什么不直接总结</h3>
+          <p><code class="inline">microcompactMessages()</code> 专门处理可压缩工具的旧结果，例如 Read、Bash、Grep、Glob、WebFetch、WebSearch、Edit 和 Write。它有两种主要路径：</p>
+          <div class="grid-2">
+            <article class="mini-card"><h3>缓存热：cache editing</h3><p>通过 API 层 cache edit 删除旧 tool result 的引用，尽量不改变本地消息和缓存前缀。源码里按工具调用数量触发，并保留最近一部分结果。</p></article>
+            <article class="mini-card"><h3>缓存冷：内容清理</h3><p>当距离上一条主线程 assistant 消息超过配置时间，旧工具结果内容会被替换为已清理标记，但至少保留最近的工具观察，避免模型完全失去工作现场。</p></article>
+          </div>
+          <p>这不是“把旧文件内容总结成一段话”，而是先把高体积、低持续价值的工具输出从请求中拿掉。对于 coding agent，这是最便宜、最常用的一层压缩。</p>
+
+          <h3>第三层：auto compact 的真实阈值</h3>
+          <p><code class="inline">autoCompact.ts</code> 先计算有效窗口：模型 context window 减去摘要输出预留。摘要输出最多预留 <code class="inline">20,000</code> tokens；随后自动压缩阈值约为 <code class="inline">effectiveWindow - 13,000</code>。</p>
+          <pre><code>effectiveWindow =
+  modelContextWindow
+  - min(modelMaxOutputTokens, 20000)
+
+autoCompactThreshold =
+  effectiveWindow - 13000</code></pre>
+          <p>源码还预留约 <code class="inline">20,000</code> tokens 的 warning/error 缓冲，以及约 <code class="inline">3,000</code> tokens 的手动压缩空间。因此它不是固定 75%，而是随模型窗口、最大输出和环境配置变化的动态阈值。测试时可用 <code class="inline">CLAUDE_CODE_AUTO_COMPACT_WINDOW</code> 限制窗口，或用 <code class="inline">CLAUDE_AUTOCOMPACT_PCT_OVERRIDE</code> 设置百分比上限。</p>
+
+          <h3>第四层：真正生成 conversation summary</h3>
+          <p>达到阈值后，自动压缩先尝试 Session Memory Compact；若不可用或未命中，再调用 <code class="inline">compactConversation()</code>。源码会创建一次 forked summarization 请求，要求模型只输出文本，不允许再调用工具。</p>
+          <p>摘要 prompt 针对工程续作设计，要求保留：</p>
+          <ul>
+            <li>用户的完整请求与偏好变化</li>
+            <li>关键技术概念、架构决策和函数签名</li>
+            <li>读过或修改过的文件、重要代码片段及原因</li>
+            <li>错误、修复过程、用户反馈和未解决问题</li>
+            <li>所有非工具用户消息、待办任务、当前工作和下一步</li>
+          </ul>
+          <p>如果压缩请求自身也遇到 prompt-too-long，源码会按 API 对话轮次从最旧部分截断后有限重试，而不是直接让会话卡死。</p>
+
+          <h3>Session Memory Compact 与部分压缩</h3>
+          <p>Session Memory Compact 优先使用会话中已经形成的持久记忆，再保留上次摘要之后的一段近期消息。它会调整保留边界，避免切断 <code class="inline">tool_use/tool_result</code> 对，或把同一 assistant message 中的 thinking block 拆开。</p>
+          <p>Partial Compact 则允许只压缩一段历史：<code class="inline">up_to</code> 总结较早前缀并保留后段，<code class="inline">from</code> 保留前缀并压缩最近部分。压缩边界会记录 preserved segment，供 transcript、恢复和 fork 重新链接。</p>
+
+          <h3>压缩后恢复的不是“摘要”，而是工作现场</h3>
+          <p><code class="inline">buildPostCompactMessages()</code> 的固定顺序是：压缩边界 → 摘要消息 → 保留消息 → 附件 → hook 结果。附件恢复包括：</p>
+          <div class="grid-2">
+            <article class="mini-card"><h3>最近文件</h3><p>最多恢复 5 个最近读取文件，总量约 50k tokens，每文件约 5k；内容过大时退回引用，需要时重新 Read。</p></article>
+            <article class="mini-card"><h3>Plan 与 Plan Mode</h3><p>恢复计划文件和 plan mode 指令，确保压缩后模型仍知道当前阶段和是否允许执行修改。</p></article>
+            <article class="mini-card"><h3>Skills / Tools / MCP</h3><p>恢复已调用 skill，并重新发布 deferred tools、Agent listing 与 MCP instructions 的增量 attachment。</p></article>
+            <article class="mini-card"><h3>Hooks 与后台 Agent</h3><p>压缩前后分别执行 PreCompact / SessionStart hooks；必要的事务记忆、子 Agent 状态和 hook 消息也会重新注入。</p></article>
+          </div>
+
+          <h3>什么时候会停止继续压缩</h3>
+          <p>自动压缩有连续失败熔断：默认连续失败 3 次后，本 session 不再无意义地反复重试。源码注释指出，曾有大量 session 因不可恢复的超限而反复尝试上千次，浪费 API 调用。压缩成功则重置失败计数。</p>
+          <p>还可以通过 <code class="inline">DISABLE_AUTO_COMPACT</code> 关闭自动压缩但保留手动 <code class="inline">/compact</code>；<code class="inline">DISABLE_COMPACT</code> 会同时关闭两者。关闭自动压缩后，接近 hard blocking limit 时系统会阻止继续发送，以保留手动压缩空间。</p>
+
+          <h3>判断压缩质量的标准</h3>
+          <ol>
+            <li><strong>任务连续性：</strong>压缩后模型是否仍知道用户目标、约束和最近反馈，而不是重新猜测。</li>
+            <li><strong>工程可执行性：</strong>是否保留关键文件、符号、错误、修改原因和下一步。</li>
+            <li><strong>协议完整性：</strong>是否保留 tool_use/tool_result 配对、thinking 边界和工具 schema 状态。</li>
+            <li><strong>缓存友好性：</strong>是否优先使用 microcompact / cache edit，避免每轮都重写完整前缀。</li>
+            <li><strong>成本可恢复性：</strong>是否避免压缩后仍立刻超阈值，导致下一轮再次压缩。</li>
+          </ol>
+
+          <div class="callout"><strong>最小心智模型：</strong>工具结果预算负责“去体积”，microcompact 负责“去旧观察”，auto compact 负责“把旧历史变成任务摘要”，post-compact attachments 负责“把执行现场装回来”。四层合在一起，才是 Claude Code 的上下文压缩。</div>
+
+          <div class="refs">事实来源：Claude Code v2.1.88 npm 解包源码。重点读取 <code class="inline">src/query.ts</code>、<code class="inline">src/services/compact/autoCompact.ts</code>、<code class="inline">src/services/compact/microCompact.ts</code>、<code class="inline">src/services/compact/compact.ts</code>、<code class="inline">src/services/compact/prompt.ts</code>、<code class="inline">src/services/compact/sessionMemoryCompact.ts</code>、<code class="inline">src/utils/toolResultStorage.ts</code>。该源码快照中部分 feature-gated 内部模块缺失。</div>
