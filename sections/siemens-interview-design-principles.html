@@ -1,0 +1,33 @@
+<div class="section-header"><div class="index">SI3</div><h2>软件设计原则：SOLID 与常见问答</h2></div>
+          <p>软件设计原则常和设计模式连着问："你说用了策略模式，那它体现了什么设计原则？"核心答案是 <strong>SOLID</strong>，外加 DRY、KISS、YAGNI、迪米特法则、组合优于继承。</p>
+
+          <h3>SOLID 五原则速答</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>S — 单一职责 SRP</h3>
+              <p>一个类/模块只有一个变化的理由。例子：agent 项目里把"调模型"、"拼 prompt"、"解析输出"拆成三个模块，而不是一个巨大的 run() 函数。判断标准：描述这个类时如果需要"并且"连接两件事，就可能违反 SRP。</p>
+            </article>
+            <article class="mini-card">
+              <h3>O — 开闭原则 OCP</h3>
+              <p>对扩展开放，对修改关闭。新增能力靠加新类而不是改老代码。例子：新增一个 tool 不用改 agent 主循环，只要注册新工具；新增一种 chunking 策略不用改召回代码。策略模式、工厂模式就是在实现 OCP。</p>
+            </article>
+            <article class="mini-card">
+              <h3>L — 里氏替换 LSP</h3>
+              <p>子类必须能替换父类而不破坏正确性。反例：Square 继承 Rectangle 后改 width 会把 height 也改掉，破坏"面积=w×h"的预期。实践含义：子类不能收紧前置条件、不能放宽后置条件、不能抛出父类没有的异常。</p>
+            </article>
+            <article class="mini-card">
+              <h3>I — 接口隔离 ISP</h3>
+              <p>客户端不该被迫依赖它用不到的方法。反例：一个 <code class="inline">ITool</code> 接口里既有 <code class="inline">execute</code> 又有 <code class="inline">render_ui</code>、<code class="inline">persist</code>，简单工具被迫实现一堆空方法。拆成小接口，按需实现。</p>
+            </article>
+            <article class="mini-card">
+              <h3>D — 依赖倒置 DIP</h3>
+              <p>高层模块不依赖低层实现，双方都依赖抽象。例子：RAG 系统的检索层依赖 <code class="inline">VectorStore</code> 接口而不是具体的 Milvus/FAISS client——换向量库时业务代码零改动。Spring 的依赖注入、Python 的鸭子类型+抽象基类都是落地方式。</p>
+            </article>
+            <article class="mini-card">
+              <h3>其他常考原则</h3>
+              <p><strong>DRY：</strong>不重复自己，重复出现三次就抽象。<strong>KISS：</strong>能简单就不要复杂。<strong>YAGNI：</strong>不做当前不需要的功能。<strong>迪米特法则：</strong>只和直接朋友说话，减少 a.b.c.d 式链式调用。<strong>组合优于继承：</strong>继承是白盒强耦合，组合通过接口装配更灵活。</p>
+            </article>
+          </div>
+
+          <h3>常见追问</h3>
+          <p><strong>"设计原则和设计模式什么关系？"</strong>——原则是指导思想（为什么），模式是可复用的具体方案（怎么做）；模式是原则在特定场景下的落地形态。<strong>"举个项目里 DIP 的例子？"</strong>——agent 主循环依赖抽象的 LLMClient/ToolExecutor 接口，具体接 GPT 还是本地模型由注入决定，测试时还能注入 mock。<strong>"原则被违反会怎样？"</strong>——举具体后果：违反 OCP 导致每加一个工具都改主流程，改动面大、回归风险高、code review 成本高。</p>

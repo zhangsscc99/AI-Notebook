@@ -1,0 +1,44 @@
+<div class="section-header"><div class="index">SI4</div><h2>卷积基本原理：CNN 高频问答</h2></div>
+          <p>医疗公司问卷积不奇怪——医学影像（CT、MRI、X 光）是 CNN 的主场。核心是讲清<strong>卷积在算什么、为什么适合图像、关键概念和尺寸计算</strong>。</p>
+
+          <h3>Q1：卷积是什么？</h3>
+          <p>卷积是用一个小的<strong>卷积核（kernel/filter）</strong>在输入上滑动，每个位置做<strong>对应元素相乘再求和</strong>，得到输出特征图上的一个值。数学上是一维/二维的加权局部求和；直觉上是一个"模式探测器"——某个 kernel 对边缘敏感，另一个对纹理敏感。</p>
+          <pre><code>output[i,j] = Σ_m Σ_n input[i+m, j+n] * kernel[m,n]</code></pre>
+          <div class="callout"><strong>一句话：</strong>卷积 = 局部加权求和 + 权值共享。局部连接利用图像的空间相关性，权值共享让同一个探测器在全图找同样的模式，参数量远小于全连接。</div>
+
+          <h3>Q2：CNN 相比全连接为什么适合图像？</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>局部感受野</h3>
+              <p>图像里相近的像素相关性强，远处的弱。每个神经元只看局部区域，符合图像先验，不用学全图任意两像素的关系。</p>
+            </article>
+            <article class="mini-card">
+              <h3>权值共享 → 平移等变</h3>
+              <p>同一个 kernel 扫全图，猫出现在左上角还是右下角都能被检测到。参数量从"像素×像素"降到 k×k，3×3 卷积核只有 9 个参数。</p>
+            </article>
+            <article class="mini-card">
+              <h3>层级特征</h3>
+              <p>浅层学边缘/颜色，中层学纹理/部件，深层学语义概念。这种层级组合恰好匹配视觉世界的组成方式。</p>
+            </article>
+            <article class="mini-card">
+              <h3>池化 → 降采样与不变性</h3>
+              <p>max/average pooling 降低分辨率、扩大感受野，并提供对小位移的鲁棒性。现代网络也常用 stride=2 卷积代替池化。</p>
+            </article>
+          </div>
+
+          <h3>Q3：输出尺寸怎么算？</h3>
+          <pre><code>out = floor((in + 2*padding - kernel) / stride) + 1</code></pre>
+          <p>例：输入 224×224，kernel 3×3，padding 1，stride 1 → 输出仍是 224×224（same padding）。stride 2 → 112×112。通道数 = kernel 个数，每个 kernel 产生一张特征图。</p>
+
+          <h3>Q4：常见追问点</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>1×1 卷积干什么？</strong>跨通道信息融合 + 升降维（bottleneck），Network in Network、ResNet bottleneck、MobileNet 里都靠它。</div>
+            <div class="flow-step" data-step="2"><strong>空洞/膨胀卷积？</strong>kernel 元素之间插空，不增参数就扩大感受野，分割常用（DeepLab）。</div>
+            <div class="flow-step" data-step="3"><strong>深度可分离卷积？</strong>depthwise（每通道一个核）+ pointwise（1×1 混合通道），MobileNet 把计算量降约 8-9 倍，部署友好。</div>
+            <div class="flow-step" data-step="4"><strong>转置卷积？</strong>学习上采样，用于分割解码器、生成模型上采样。</div>
+            <div class="flow-step" data-step="5"><strong>ResNet 为什么能很深？</strong>残差连接 y = F(x) + x，梯度可以走捷径回传，缓解梯度消失/退化，百层网络可训练。</div>
+            <div class="flow-step" data-step="6"><strong>卷积和 Transformer 关系？</strong>卷积是固定局部感受野的"硬归纳偏置"，self-attention 是全局动态权重；ViT 用 patch embedding（本质是大 stride 卷积）把图像喂给 Transformer，趋势是两者融合（ConvNeXt、Swin）。</div>
+          </div>
+
+          <h3>Q5：医学影像场景怎么落地？</h3>
+          <p>被问到应用时可以这样答：医学影像任务里 CNN 的典型形态是 <strong>U-Net</strong>（编码器下采样提语义 + 解码器上采样恢复分辨率 + skip connection 补细节），用于器官/病灶分割；分类任务用 ResNet/DenseNet 做良恶性判断；检测任务用 Faster R-CNN / RetinaNet 找结节。医疗数据的特殊性：标注贵 → 小样本、数据增广、迁移学习；3D 数据（CT/MRI 体数据）→ 3D 卷积或 2.5D 多切片方案。</p>

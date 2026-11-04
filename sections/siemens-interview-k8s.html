@@ -1,0 +1,40 @@
+<div class="section-header"><div class="index">SI5</div><h2>K8s 了解多少：分层回答框架</h2></div>
+          <p>"K8s 了解多少"是开放题，面试官想看你的认知边界和实践经验。按<strong>解决什么问题 → 核心概念 → 架构 → 你用过多深</strong>四层回答，诚实标注深浅即可。</p>
+
+          <h3>第一层：K8s 解决什么问题</h3>
+          <p>容器编排平台。当服务从几台机器几个容器变成几百上千容器时，手工管理不可能，K8s 负责：<strong>调度</strong>（容器放哪台机器）、<strong>自愈</strong>（挂了自动重启/迁移）、<strong>弹性伸缩</strong>（按负载加减副本）、<strong>服务发现与负载均衡</strong>、<strong>滚动发布与回滚</strong>、<strong>声明式配置</strong>（描述期望状态，系统自动逼近）。</p>
+
+          <h3>第二层：核心对象</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Pod</h3>
+              <p>最小调度单位，一个或多个共享网络/存储的容器。一般不直接创建 Pod，而是由控制器管理。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Deployment / ReplicaSet</h3>
+              <p>无状态服务的标准管理方式：声明副本数，RS 保证数量，Deployment 在其上加滚动更新和回滚。StatefulSet 管有状态服务（稳定网络标识+稳定存储），DaemonSet 保证每节点跑一个（日志/监控 agent）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Service / Ingress</h3>
+              <p>Pod IP 会变，Service 提供稳定的虚拟 IP 和 DNS 名做服务发现+负载均衡（ClusterIP 内部、NodePort、LoadBalancer）。Ingress 管 HTTP/HTTPS 七层入口路由，统一域名、TLS、路径规则。</p>
+            </article>
+            <article class="mini-card">
+              <h3>ConfigMap / Secret / PV</h3>
+              <p>ConfigMap 存非敏感配置，Secret 存密钥（base64+RBAC）。PV/PVC 把存储抽象成"申请-绑定"模型，Pod 不用关心底层是 NFS 还是云盘。</p>
+            </article>
+          </div>
+
+          <h3>第三层：控制面架构（追问深挖用）</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>API Server。</strong>唯一入口，所有组件都通过它读写集群状态。</div>
+            <div class="flow-step" data-step="2"><strong>etcd。</strong>分布式 KV，存全部集群状态，是集群的"数据库"。</div>
+            <div class="flow-step" data-step="3"><strong>Scheduler。</strong>给 Pending Pod 选节点：先过滤（资源够不够、亲和性），再打分选最优。</div>
+            <div class="flow-step" data-step="4"><strong>Controller Manager。</strong>一堆控制循环：持续对比期望状态和实际状态，不一致就纠偏——这是 K8s "声明式"的灵魂。</div>
+            <div class="flow-step" data-step="5"><strong>节点侧 kubelet + kube-proxy。</strong>kubelet 管本节点 Pod 生命周期、上报健康；kube-proxy 实现 Service 的转发规则（iptables/IPVS）。</div>
+          </div>
+
+          <h3>第四层：实际使用深度（按真实经历答）</h3>
+          <p><strong>浅层使用：</strong>会写 Deployment/Service 的 YAML，会 <code class="inline">kubectl apply/get/logs/describe/exec</code>，会把服务部署上去并排查 CrashLoopBackOff。<strong>中层：</strong>配过 resource request/limit 和 HPA 自动扩缩、liveness/readiness 探针、滚动更新策略；用 Helm/Kustomize 管理多环境；跑过 GPU 训练任务（nvidia device plugin、node selector/taints）。<strong>深层：</strong>Operator/CRD 自定义资源、网络策略、RBAC、成本与调度优化。</p>
+
+          <h3>常见追问</h3>
+          <p><strong>"Pod 挂了怎么办？"</strong>——restartPolicy 控制 Pod 内重启；Deployment 保证副本数补齐；探针区分"需要重启"（liveness）和"暂时不接流量"（readiness）。<strong>"发布怎么做？"</strong>——Deployment 滚动更新（maxSurge/maxUnavailable）、金丝雀（两个 Deployment + Service 权重/Ingress canary）、蓝绿。<strong>"排查一个服务不通？"</strong>——Pod 状态 → describe 看事件 → logs 看应用 → Service endpoints 有没有 Pod → DNS/网络策略。</p>

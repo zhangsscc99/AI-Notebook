@@ -1,0 +1,61 @@
+<div class="section-header"><div class="index">SI10</div><h2>英文考察：Daily Work 与项目复述模板</h2></div>
+          <p>西门子医疗的英文考察有两种已出现形式：<strong>开场英文讲 agent 项目</strong>，以及<strong>中途要求把刚说的用英文复述</strong>。此外要求用英文描述 daily work。准备两份可背的模板 + 高频词汇。</p>
+
+          <h3>模板 1：英文讲项目（60-90 秒版）</h3>
+          <pre><code>"Sure. My main project is an LLM-based agent system that
+[one-line purpose, e.g. automates X / evaluates Y].
+
+The system has three core parts: an agent loop that drives
+the model, a tool layer that lets the agent [act on
+files / call APIs / run code] inside a sandboxed
+environment, and a harness layer that runs tasks
+reproducibly — same inputs, same environment, measurable
+outputs.
+
+My responsibility was [designing the evaluation pipeline /
+the tool execution layer / ...]. The hardest problem was
+[X], and I solved it by [Y], which improved [metric]."</code></pre>
+          <p>复述技巧：英文版不需要逐字翻译中文内容，把骨架（是什么 → 三部分 → 我的角色 → 最难的问题+结果）套上即可，宁可短而流畅。</p>
+
+          <h3>模板 2：Daily Work 英文描述</h3>
+          <pre><code>"On a typical day, I start by checking experiment results
+or CI runs from the night before, and triage any failures.
+
+Most of my time goes into [building data pipelines /
+improving the agent's tool layer / running evals]. I work
+closely with [teammates / product / researchers] — we
+sync in a short daily standup, and I write design docs
+for anything non-trivial.
+
+When something breaks, my first step is to reproduce it
+reliably, then narrow it down with logging or tracing.
+Code review and documentation are part of the routine,
+not an afterthought."</code></pre>
+
+          <h3>高频项目词汇（中英对照）</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Agent / Harness 相关</h3>
+              <p>agent loop（智能体主循环）、tool call（工具调用）、sandboxed environment（沙箱环境）、orchestration（编排）、harness / eval harness（评测脚手架）、benchmark（基准测试）、trace（执行轨迹）、reproducible（可复现的）、reward hacking（奖励作弊）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>训练 / 模型相关</h3>
+              <p>fine-tuning（微调）、LoRA（低秩适配）、GRPO/RLHF（强化学习对齐）、data pipeline（数据管线）、inference latency（推理延迟）、hallucination（幻觉）、retrieval-augmented generation（检索增强生成）、embedding（向量表示）、reranker（重排模型）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>工程动词（描述贡献用）</h3>
+              <p>I designed / implemented / built / optimized / migrated / refactored / debugged / profiled / automated / evaluated. 搭配量化结果："which cut latency by 30%" / "raised pass rate from 72% to 81%"。</p>
+            </article>
+            <article class="mini-card">
+              <h3>衔接句式</h3>
+              <p>"To put it simply..." / "The key trade-off here is..." / "What I learned from this is..." / "If I could redo it, I would..." / "Let me give you a concrete example." 卡住时用 "In other words, ..." 重新组织，不要沉默。</p>
+            </article>
+          </div>
+
+          <h3>临场策略</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>听不清/没听懂。</strong>"Sorry, could you rephrase the question?" 比硬答错方向好一百倍。</div>
+            <div class="flow-step" data-step="2"><strong>被突然要求英文复述。</strong>别慌，取刚才内容的 2-3 个主干点，用简单句说，不求全。</div>
+            <div class="flow-step" data-step="3"><strong>专业词卡住。</strong>用解释代替术语："a framework that runs and scores the model" 替代 "harness" 完全可以。</div>
+            <div class="flow-step" data-step="4"><strong>结尾收尾。</strong>"Does that answer your question? I'm happy to go deeper on any part." 主动递话头，也给自己转中文的空间。</div>
+          </div>

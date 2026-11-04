@@ -1,0 +1,47 @@
+<div class="section-header"><div class="index">SI7</div><h2>大模型理解 + 项目里的 Harness 怎么做</h2></div>
+          <p>"大模型理解"考的是你对 LLM 本质的认知；"怎么做 harness"是高级别面试官重点追问项，考的是工程落地：怎么让模型/agent 可靠地被驱动、被评测。</p>
+
+          <h3>Part 1：大模型理解高频问答</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>LLM 本质是什么</h3>
+              <p>基于 Transformer 的自回归 next-token 预测器。给定前文 token，输出下一个 token 的概率分布，采样/贪心逐个生成。"智能"来自大规模预训练中压缩进参数的世界知识 + 指令微调/RLHF 对齐出的任务遵循能力。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Self-Attention 一句话</h3>
+              <p>每个 token 作为 query 和其他 token 的 key 算相关性权重，对 value 加权求和得到新表示。复杂度 O(n²) 于序列长度，所以长上下文贵；KV cache 用空间换时间避免重复计算。</p>
+            </article>
+            <article class="mini-card">
+              <h3>训练三阶段</h3>
+              <p>预训练（海量语料学语言+知识）→ SFT（指令数据学"怎么答"）→ 偏好对齐（RLHF/DPO 学"答得好"）。工程上 LoRA 冻结主干只训低秩矩阵，是低成本微调的事实标准。</p>
+            </article>
+            <article class="mini-card">
+              <h3>关键局限</h3>
+              <p>幻觉（概率生成本质上没有"知道/不知道"）、知识截止（靠 RAG/工具补）、上下文窗口有限、推理弱（靠 CoT/RL 增强）、无状态（记忆要外挂）。Agent 架构很大程度是在补这些短板。</p>
+            </article>
+          </div>
+
+          <h3>Part 2：Harness 是什么</h3>
+          <p>Harness（挽具/脚手架）在 agent 语境里有两种含义，面试前先分清面试官问哪个：</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>含义 A：运行时脚手架</h3>
+              <p>驱动 agent 跑起来的外层程序：agent loop、工具注册与调度、上下文管理、沙箱、权限控制、日志与恢复。Claude Code 本身就是一个 harness——模型是引擎，harness 是底盘。</p>
+            </article>
+            <article class="mini-card">
+              <h3>含义 B：评测脚手架</h3>
+              <p>跑 benchmark 的框架（lm-eval-harness、DeepSeek harness、SWE-bench）：加载数据集 → 构造输入 → 调模型 → 解析输出 → 打分 → 汇总报告。保证评测可复现、可对比。</p>
+            </article>
+          </div>
+
+          <h3>Part 3：项目里 harness 怎么做（回答模板）</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>任务抽象。</strong>把一次运行抽象成 Task/Case：输入、工具配置、期望输出、评分器。harness 只面向这个抽象，不关心具体任务内容。</div>
+            <div class="flow-step" data-step="2"><strong>Agent 驱动层。</strong>标准化的 run 循环：拼 prompt（系统提示+工具描述+历史）→ 调模型 → 解析 tool call → 执行工具（沙箱内）→ 结果回灌 → 直到 done 或超限。每步记 trace。</div>
+            <div class="flow-step" data-step="3"><strong>环境与隔离。</strong>工具执行放沙箱：Docker 容器或受限子进程，文件系统/网络按任务需求开关，防 agent 把宿主机搞坏，也保证每次运行环境一致（可复现）。</div>
+            <div class="flow-step" data-step="4"><strong>评分器插件化。</strong>每个 case 挂 grader：exact match、规则校验、LLM-as-judge、或跑测试用例。harness 框架 + 可插拔 grader = 模板方法 + 策略模式。</div>
+            <div class="flow-step" data-step="5"><strong>并发与容错。</strong>多 case 并发跑，单个 case 超时/崩溃隔离，失败重试与断点续跑；全部 trace 落盘，失败 case 可回放复现。</div>
+            <div class="flow-step" data-step="6"><strong>报告与对比。</strong>汇总 pass rate、分维度指标、token 成本；支持跨模型/跨配置对比实验，输出可追溯的报告。</div>
+          </div>
+
+          <div class="callout"><strong>面试答法建议：</strong>先问一句"您指的是运行时 harness 还是评测 harness"会显得专业；然后按"抽象 → 驱动 → 隔离 → 评分 → 并发容错 → 报告"六步走一遍，并在每一步落到你项目的具体实现。高级别面试官关心的是：环境一致性（可复现）、故障隔离（一个 case 崩不拖垮全部）、结果可信（评分器会不会被 hack）。</div>

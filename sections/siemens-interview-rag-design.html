@@ -1,0 +1,41 @@
+<div class="section-header"><div class="index">SI6</div><h2>设计一个 RAG 系统：完整链路与取舍</h2></div>
+          <p>"设计一个 RAG 系统"是面试里的系统设计题，面试官想看你能不能画出端到端链路并讲清每步的 trade-off。按<strong>离线建库 + 在线检索生成</strong>两条管线组织回答。</p>
+
+          <h3>整体架构</h3>
+          <pre><code>离线：文档 → 解析/清洗 → chunking → embedding → 向量库（+ BM25 倒排）
+在线：query → 改写/扩展 → 混合召回 → rerank → 拼 context → LLM 生成 → 引用/校验</code></pre>
+
+          <h3>离线侧：建库</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>解析与清洗</h3>
+              <p>PDF/Word/HTML 先结构化解析，保留标题层级、表格、图片位置；去掉页眉页脚、乱码。医学/企业文档表格多，表格要转 Markdown 或拆成"表名+行"的文本块，否则 embedding 效果差。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Chunking 策略</h3>
+              <p>固定长度切 vs 语义切 vs 结构切（按标题/段落）。经验值 300-500 token、10-15% overlap 保持上下文连续。关键取舍：chunk 太大噪声多、检索精度差；太小语义不完整。进阶：parent-child（小 chunk 召回、大 chunk 喂模型）、句窗检索。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Embedding 与索引</h3>
+              <p>选 dense embedding 模型（中英场景 BGE/E5 系列），L2 归一化后入向量库（FAISS/Milvus/pgvector）。同时建 BM25 倒排解决关键词精确匹配——dense 模型对型号、术语、编号这类字面匹配反而不行。</p>
+            </article>
+            <article class="mini-card">
+              <h3>元数据与可更新性</h3>
+              <p>每个 chunk 带 metadata：文档名、章节、版本、时间、权限标签。支持按文档增量更新/删除，权限过滤在召回时做 pre-filter。</p>
+            </article>
+          </div>
+
+          <h3>在线侧：检索与生成</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>Query 处理。</strong>多轮对话先改写（把"它"还原成实体）；可做 HyDE（先生成假设答案再检索）或 query 扩展。难词/术语可触发词典标准化。</div>
+            <div class="flow-step" data-step="2"><strong>混合召回。</strong>dense 向量 top-k + BM25 top-k，用 RRF（reciprocal rank fusion）融合。召回量取大（如 50），把排序压力留给 rerank。</div>
+            <div class="flow-step" data-step="3"><strong>Rerank。</strong>cross-encoder 把 query+chunk 拼接打分，精排取 top 5-10。这是性价比最高的一步：召回放宽、精排把关。</div>
+            <div class="flow-step" data-step="4"><strong>生成。</strong>chunks 按序拼进 prompt，带编号引用；prompt 里明确"只根据给定资料回答，不知道就说不知道"，抑制幻觉。</div>
+            <div class="flow-step" data-step="5"><strong>引用与兜底。</strong>输出带 chunk 引用，用户可溯源；检索分数过低时走"未命中"话术而不是硬答。</div>
+          </div>
+
+          <h3>评估与迭代（加分项）</h3>
+          <p>三层指标：<strong>检索层</strong> recall@k、MRR、nDCG；<strong>生成层</strong> faithfulness（答案是否被 context 支撑）、answer relevance；<strong>端到端</strong> 人工标注的问答集准确率。迭代手段：badcase 分析归类（召回没中 / rerank 排错 / 生成没按资料答），对症调整 chunking、embedding、rerank 或 prompt。</p>
+
+          <h3>常见追问</h3>
+          <p><strong>"召回不准怎么优化？"</strong>——先定位是召回没中还是排序错：召回没中→换 embedding、调 chunk、加 BM25/关键词；排序错→上 rerank 或调融合权重。<strong>"为什么混合检索？"</strong>——dense 擅长语义相近、字面不同的；sparse 擅长度型号/术语精确匹配，互补。<strong>"幻觉怎么控？"</strong>——prompt 约束 + 引用溯源 + faithfulness 后检 + 低分拒答，医疗场景还会加人工审核流。<strong>"多模态/表格怎么办？"</strong>——参考 VRAG 思路：文档切块保留视觉信息、多模态 embedding、表格结构化后单独建索引。</p>

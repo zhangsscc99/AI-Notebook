@@ -1,0 +1,47 @@
+<div class="section-header"><div class="index">SI9</div><h2>并发与数据库：悲观锁/乐观锁、线程、B+ 树</h2></div>
+          <p>这一组是传统后端八股：锁、线程、索引。每题记住"定义 → 适用场景 → 项目里对应物"。</p>
+
+          <h3>Q1：悲观锁 vs 乐观锁</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>悲观锁 Pessimistic</h3>
+              <p>假设冲突一定会发生，先拿锁再操作。实现：<code class="inline">SELECT ... FOR UPDATE</code>（行锁）、数据库表锁、Java synchronized/ReentrantLock、分布式 Redis/DB 锁。代价：阻塞等待，并发度低，可能死锁。</p>
+            </article>
+            <article class="mini-card">
+              <h3>乐观锁 Optimistic</h3>
+              <p>假设冲突少，操作时不加锁，提交时检查有没有被别人改过。实现：version 版本号（<code class="inline">UPDATE ... WHERE version = old_version</code>）、CAS（compare-and-swap）。冲突时重试。并发度高，但冲突多时重试成本高。</p>
+            </article>
+          </div>
+          <p><strong>选型：</strong>写多冲突多 → 悲观锁（重试比加锁还贵）；读多写少冲突少 → 乐观锁。库存扣减、余额修改这类强一致场景常用悲观锁或"乐观锁+有限重试"。追问"CAS 的 ABA 问题"→ 值从 A 变 B 又变回 A，CAS 察觉不到；解法：带版本号/时间戳的 CAS（AtomicStampedReference）。</p>
+
+          <h3>Q2：线程相关高频点</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>进程 vs 线程。</strong>进程是资源分配单位（独立内存空间），线程是调度单位（共享进程内存）。线程切换轻，但共享数据要同步。</div>
+            <div class="flow-step" data-step="2"><strong>线程安全问题从哪来。</strong>共享可变状态 + 非原子操作（read-modify-write，如 i++）。解法：加锁、用原子类、不可变对象、线程本地变量（ThreadLocal）、干脆不共享。</div>
+            <div class="flow-step" data-step="3"><strong>死锁四条件与解法。</strong>互斥、持有且等待、不可剥夺、循环等待——破坏任一即可。实践：固定加锁顺序、超时拿锁（tryLock）、减少锁粒度。</div>
+            <div class="flow-step" data-step="4"><strong>线程池参数。</strong>corePoolSize、maxPoolSize、队列、拒绝策略。CPU 密集型 ≈ 核数；IO 密集型可以大很多。不要用无界队列把 OOM 藏起来。</div>
+            <div class="flow-step" data-step="5"><strong>Python 的 GIL。</strong>CPython 同一时刻只有一个线程执行字节码——多线程对 CPU 密集无效（用多进程），对 IO 密集有效（等 IO 时释放 GIL）。AI 项目里推理/训练靠多进程或异步绕开。</div>
+          </div>
+
+          <h3>Q3：B+ 树与数据库索引</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>为什么是 B+ 树</h3>
+              <p>数据库索引要满足：磁盘友好（节点=页，一次 IO 读一批）、矮胖（3-4 层就能索引亿级行）、范围快。B+ 树非叶子节点只存 key 不存数据 → 单页存更多 key、树更矮；叶子节点存数据且<strong>链表相连</strong> → 范围查询顺着链表扫，不用回树。</p>
+            </article>
+            <article class="mini-card">
+              <h3>vs 其他结构</h3>
+              <p>哈希索引：等值 O(1) 但完全没法范围/排序。B 树：数据存所有节点，范围查询要中序遍历。跳表（Redis）：实现简单、并发好，但磁盘场景不如 B+ 树局部性。LSM 树（RocksDB）：写优化，读放大，适合写多场景。</p>
+            </article>
+            <article class="mini-card">
+              <h3>聚簇 vs 非聚簇索引</h3>
+              <p>InnoDB 主键是聚簇索引：叶子节点直接存整行数据。二级索引叶子存主键值 → 查到后还要<strong>回表</strong>再查一次主键索引。覆盖索引（查询列都在索引里）可省回表。</p>
+            </article>
+            <article class="mini-card">
+              <h3>索引失效与优化</h3>
+              <p>联合索引遵循<strong>最左前缀</strong>；对列做函数/运算、隐式类型转换、前导模糊 LIKE '%x'、OR 跨列，都会让索引失效。慢查询三板斧：EXPLAIN 看执行计划 → 补/调索引 → 必要时改 SQL 结构。</p>
+            </article>
+          </div>
+
+          <h3>可能的连环追问</h3>
+          <p><strong>"事务隔离级别？"</strong>——读未提交（脏读）→ 读已提交（不可重复读）→ 可重复读（MySQL 默认，MVCC+next-key lock 防大部分幻读）→ 串行化。<strong>"MVCC 是什么？"</strong>——每行存多个版本+undo log 版本链，读操作读快照不阻塞写，写不阻塞读，是"读已提交/可重复读"的实现基础。<strong>"Redis 分布式锁？"</strong>——SET NX EX 拿锁，解锁要校验 value 是自己（Lua 原子删除），看门狗续期（Redisson），注意主从切换丢锁问题。</p>

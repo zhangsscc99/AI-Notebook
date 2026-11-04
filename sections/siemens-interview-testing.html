@@ -1,0 +1,37 @@
+<div class="section-header"><div class="index">SI8</div><h2>测试怎么问：测试金字塔、LLM 项目测试与 Mock</h2></div>
+          <p>"问测试"通常不是让你背 ISTQB，而是问<strong>你项目里测试怎么做的</strong>。准备好测试金字塔框架 + LLM/agent 项目的特殊测试手段。</p>
+
+          <h3>Q1：测试分哪几层？</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>单元测试。</strong>测单个函数/类，外部依赖全部 mock。占大头、跑得快、定位准。覆盖解析函数、工具函数、状态转换逻辑。</div>
+            <div class="flow-step" data-step="2"><strong>集成测试。</strong>测多个模块拼起来对不对：数据库真的读写、API 真的调通（可用 testcontainer/本地服务），数量少而精。</div>
+            <div class="flow-step" data-step="3"><strong>端到端测试。</strong>从入口走完整链路，模拟真实用户场景。最贵最脆，只覆盖关键路径。</div>
+            <div class="flow-step" data-step="4"><strong>回归测试。</strong>每次改动重跑历史用例，保证没改坏旧功能。CI 里自动跑，是"敢重构"的底气。</div>
+          </div>
+
+          <h3>Q2：LLM/Agent 项目测试怎么做？（重点）</h3>
+          <p>模型输出不确定，传统断言不好用，这是该问题的真正考点：</p>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>确定性逻辑照常测</h3>
+              <p>prompt 拼接、tool call 解析、重试逻辑、截断逻辑这些都是确定性代码，正常单测。模型调用层用 mock client 注入，返回预录的 response。</p>
+            </article>
+            <article class="mini-card">
+              <h3>录制回放（VCR/snapshot）</h3>
+              <p>把真实模型响应录下来，测试时回放。既能断言下游解析逻辑，又能检测 prompt 模板有没有意外变化（snapshot diff）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>评测集当测试</h3>
+              <p>建一个小的 golden 数据集（几十条典型 query + 期望行为），CI 里跑 harness 打分，设置阈值——分数掉了就当测试挂了。这就是 eval-driven development。</p>
+            </article>
+            <article class="mini-card">
+              <h3>LLM-as-judge 与不变量</h3>
+              <p>开放式输出用另一个模型按 rubric 打分；或者断言"不变量"：输出必须是合法 JSON、必须包含引用、必须不含敏感词、延迟 < N 秒——不定内容但定性质。</p>
+            </article>
+          </div>
+
+          <h3>Q3：Mock / Stub / Fake 区别？</h3>
+          <p><strong>Stub</strong>：返回写死的数据，只为让流程走下去。<strong>Mock</strong>：还记录调用行为，可以断言"被调了几次、参数是什么"。<strong>Fake</strong>：轻量真实现（如内存版数据库），行为真但不是生产实现。测试隔离外部依赖的核心手段。</p>
+
+          <h3>Q4：常见追问</h3>
+          <p><strong>"测试覆盖率怎么看？"</strong>——覆盖率是参考不是目标；70-80% 行覆盖 + 关键路径 100% 比较务实；比起覆盖率更看"有没有测到坏路径"（异常、边界、并发）。<strong>"TDD 你怎么看？"</strong>——先写测试逼自己想清接口，对复杂逻辑有效；但探索性代码先跑通再补测也合理，不必教条。<strong>" flaky test（时好时坏）怎么办？"</strong>——常见原因：依赖时间/随机数/外部服务/并发时序；处理：固定随机种子、mock 时钟、重试标记+根治排序，不能无限重试掩盖真 bug。</p>

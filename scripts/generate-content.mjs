@@ -58,6 +58,8 @@ const groupDescriptions = {
     "Hermes Agent 沙箱隔离、编辑流程和威胁模型。",
   openfolioAnalysisTocGroup:
     "Openfolio 分析引擎的实现与面试表达方式。",
+  siemensInterviewTocGroup:
+    "西门子医疗一面问答整理：项目/harness、设计模式与原则、K8s、CNN、RAG、并发与数据库、英文表达。",
 };
 
 function cleanText(value) {

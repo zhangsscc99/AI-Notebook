@@ -1,0 +1,44 @@
+<div class="section-header"><div class="index">SI2</div><h2>设计模式：高频问答与项目结合点</h2></div>
+          <p>西门子医疗一面几乎必问设计模式。不要只背 23 种，重点准备<strong>常见几类的定义 + 使用场景 + 你项目里哪里用了</strong>。面试官更关心"为什么这么设计"而不是"模式叫什么名字"。</p>
+
+          <h3>Q1：常用的设计模式有哪些？分几大类？</h3>
+          <p>三大类：<strong>创建型</strong>（怎么造对象：单例、工厂、抽象工厂、建造者、原型）、<strong>结构型</strong>（怎么组合：适配器、装饰器、代理、外观、组合）、<strong>行为型</strong>（怎么交互：观察者、策略、模板方法、责任链、状态、命令、迭代器）。面试答 5-8 个熟的即可，每个带一个场景。</p>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>单例 Singleton</h3>
+              <p>保证全局只有一个实例。场景：配置中心、连接池、日志器。追问点：<strong>线程安全</strong>——懒汉式要双重检查锁（DCL）+ volatile 防指令重排；或直接用饿汉式 / 枚举 / 静态内部类。Python 里常用模块级对象或 <code class="inline">__new__</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>工厂 Factory / 抽象工厂</h3>
+              <p>把对象创建逻辑收敛到一个地方，调用方只依赖接口。场景：按类型创建不同的 LLM client、不同的 tool 实例、不同的数据库连接。追问点：和简单 if-else 的区别——新增类型时只改工厂注册表，不改调用方（开闭原则）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>策略 Strategy</h3>
+              <p>一族算法可互换，运行期选择。场景：不同的 chunking 策略、不同的 rerank 策略、不同的 retry/backoff 策略。代码上就是一个接口 + 多个实现 + 上下文注入。面试官爱问：和 if-else 的区别——策略把分支变成可扩展的类。</p>
+            </article>
+            <article class="mini-card">
+              <h3>观察者 Observer / 发布订阅</h3>
+              <p>一对多依赖，状态变化自动通知。场景：事件总线、模型推理完成回调、UI 数据绑定、消息队列。追问点：和发布订阅的区别——观察者模式下 subject 直接持有 observer 引用；发布订阅中间有 broker，双方解耦。</p>
+            </article>
+            <article class="mini-card">
+              <h3>适配器 Adapter / 外观 Facade</h3>
+              <p>适配器：把不兼容的接口包成目标接口，场景如把各家 LLM API 统一成一个 <code class="inline">chat()</code> 接口。外观：给复杂子系统一个简单入口，场景如 SDK 封装内部多个服务。Agent 项目里"统一 tool 调用协议"本质就是适配器。</p>
+            </article>
+            <article class="mini-card">
+              <h3>责任链 / 模板方法</h3>
+              <p>责任链：请求沿链传递直到被处理，场景如权限校验链、中间件、Claude Code 的多层权限审查。模板方法：父类定骨架，子类填步骤，场景如评测 harness 里"加载数据→推理→打分→汇总"的固定流程。</p>
+            </article>
+          </div>
+
+          <h3>Q2：你项目里用了哪些设计模式？</h3>
+          <p>结合 agent 项目的答法：</p>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>策略模式。</strong>不同模型后端 / 不同检索策略做成可插拔实现，配置里切换。</div>
+            <div class="flow-step" data-step="2"><strong>适配器模式。</strong>各家 LLM API 的入参出参差异很大，统一适配成内部 message 协议。</div>
+            <div class="flow-step" data-step="3"><strong>观察者 / 事件。</strong>工具执行、日志、tracing 通过事件钩子挂接，主循环不感知。</div>
+            <div class="flow-step" data-step="4"><strong>模板方法 + 工厂。</strong>harness 里每个 benchmark 共享"加载→运行→评分"骨架，具体实现由工厂按名字创建。</div>
+          </div>
+
+          <h3>Q3：常见追问</h3>
+          <p><strong>"单例为什么用 volatile？"</strong>——防止 new 对象的"分配内存→初始化→赋值引用"三步被指令重排，导致别的线程拿到未初始化的半对象。<strong>"代理和装饰器区别？"</strong>——代理控制访问（不让你随便调），装饰器增强功能（给你加料）；结构上很像，意图不同。<strong>"过度设计怎么避免？"</strong>——YAGNI，先有简单实现，出现第二三种变化时再抽象成模式。</p>
