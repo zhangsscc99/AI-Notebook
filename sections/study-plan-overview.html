@@ -1,0 +1,15 @@
+<div class="section-header"><div class="index">PLAN</div><h2>学习计划使用说明</h2></div>
+          <p>这个分组是纯手工维护的学习计划清单：每条计划是一个章节，内容自己写（目标、范围、资料、验收标准），页头顶部的 <strong>1-10 熟练度评分</strong>当作完成度来打——打完会自动计入侧栏的分组进度条和总进度条。</p>
+
+          <h3>怎么加一条新计划</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>新建章节文件。</strong>在 sections/ 下新建 study-plan-xxx.html，照抄本条目的结构：section-header + 目标 + 计划清单 + 验收标准。</div>
+            <div class="flow-step" data-step="2"><strong>注册目录。</strong>在 content-source/index.html 的 studyPlanTocGroup 分组里加一行 <code class="inline">&lt;a href="#study-plan-xxx"&gt;NN · 计划名&lt;/a&gt;</code>，并在 &lt;/main&gt; 前加对应的 lazy-section 占位。</div>
+            <div class="flow-step" data-step="3"><strong>重新生成。</strong>运行 <code class="inline">npm run content</code>（dev 模式下 npm run dev 会自动跑），目录和搜索索引就会更新。</div>
+            <div class="flow-step" data-step="4"><strong>打完成度。</strong>打开这条计划的页面，用顶部 1-10 打分：1=刚开个头，5=完成一半，9-10=彻底搞定。分数存在浏览器本地，随时可改。</div>
+          </div>
+
+          <h3>建议的计划条目写法</h3>
+          <div class="callout"><strong>每条计划建议包含：</strong>目标（要达到什么水平）、范围（复习哪些资料/章节）、输出（能给别人讲出来/做题 9 分以上/写出笔记）、时间盒（哪天前完成）。计划写得越具体，完成度越好打。</div>
+
+          <p>打分建议：<strong>先复习内容再打分</strong>——可以用每个章节页里的「面试练习」做题自测，做到 9 分以上再把熟练度打上去，进度条才反映真实掌握度。</p>

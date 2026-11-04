@@ -10,6 +10,8 @@ const publicSections = path.join(root, "public", "sections");
 const dataDirectory = path.join(root, "src", "data");
 
 const groupDescriptions = {
+  studyPlanTocGroup:
+    "手工维护的学习计划清单：每条计划含目标、清单与验收标准，用熟练度打分跟踪完成度。",
   memoryTocGroup:
     "OpenClaw 的记忆分层、检索链路、写入机制与安全边界。",
   toolllmTocGroup:
