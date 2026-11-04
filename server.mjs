@@ -4,6 +4,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { handleApiRequest } from "./api.mjs";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
@@ -135,6 +136,11 @@ const server = http.createServer(async (request, response) => {
   const requestUrl = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
 
   try {
+    if (requestUrl.pathname.startsWith("/api/")) {
+      await handleApiRequest(request, response);
+      return;
+    }
+
     const resolved = await resolveFile(requestUrl.pathname);
     if (!resolved) {
       response.writeHead(404, {

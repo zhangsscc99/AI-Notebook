@@ -5,6 +5,7 @@ import {
   ProficiencyTag,
 } from "../components/Proficiency";
 import { useArticle } from "../hooks/useArticle";
+import PracticePanel from "../components/PracticePanel";
 import { preloadArticle } from "../lib/articles";
 import {
   catalog,
@@ -131,6 +132,12 @@ export default function ArticlePage({ sectionId }: { sectionId: string }) {
           </Link>
         </div>
         <ProficiencyPicker sectionId={section.id} />
+        <PracticePanel
+          section={section}
+          articleText={
+            article.status === "ready" ? stripHtmlToText(article.html) : ""
+          }
+        />
       </header>
 
       {article.status === "loading" ? <ArticleSkeleton /> : null}
@@ -181,6 +188,12 @@ export default function ArticlePage({ sectionId }: { sectionId: string }) {
       </nav>
     </article>
   );
+}
+
+function stripHtmlToText(html: string) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return (div.textContent || "").replace(/\s+/g, " ").trim().slice(0, 3000);
 }
 
 function ArticleSkeleton() {
