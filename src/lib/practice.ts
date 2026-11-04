@@ -72,6 +72,25 @@ export function askCoach(params: {
   return post("/api/ask", params);
 }
 
+export interface CodexProposal {
+  slug: string;
+  title: string;
+  menuTitle: string;
+  groupId: string | null;
+  groupTitle: string | null;
+  groupDescription: string | null;
+  summary: string;
+  html: string;
+}
+
+export function codexDraft(question: string): Promise<{ proposal: CodexProposal }> {
+  return post("/api/codex-draft", { question });
+}
+
+export function codexCommit(proposal: CodexProposal): Promise<{ ok: boolean; slug: string }> {
+  return post("/api/codex-commit", proposal);
+}
+
 export async function fetchHistory(): Promise<PracticeRecord[]> {
   const response = await fetch("/api/history");
   const data = await response.json().catch(() => ({}));

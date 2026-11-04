@@ -8,6 +8,7 @@ import { ChevronIcon, CloseIcon, SearchIcon } from "./Icons";
 import { Link, useRouter } from "../router";
 import { ProficiencyTag } from "./Proficiency";
 import { useProficiency } from "../context/ProficiencyContext";
+import { codexCommit, codexDraft, type CodexProposal } from "../lib/practice";
 
 interface SidebarProps {
   mobileOpen: boolean;
@@ -26,7 +27,7 @@ export default function Sidebar({
   openSearch,
 }: SidebarProps) {
   const { pathname } = useRouter();
-  const { ratedCount } = useProficiency();
+  const { ratedCount, getScore } = useProficiency();
   const activeSectionId = getActiveSectionId(pathname);
   const activeGroupId = activeSectionId
     ? sectionById.get(activeSectionId)?.groupId
@@ -41,6 +42,47 @@ export default function Sidebar({
     [activeGroupId],
   );
   const [openGroups, setOpenGroups] = useState<Set<string>>(initialOpenGroups);
+  const [codexInput, setCodexInput] = useState("");
+  const [codexBusy, setCodexBusy] = useState(false);
+  const [codexMsg, setCodexMsg] = useState("");
+  const [codexProposal, setCodexProposal] = useState<CodexProposal | null>(null);
+
+  async function onCodexAsk() {
+    if (!codexInput.trim() || codexBusy) return;
+    setCodexBusy(true);
+    setCodexMsg("Codex 阅读源码并撰写中，可能需要几分钟…");
+    setCodexProposal(null);
+    try {
+      const { proposal } = await codexDraft(codexInput.trim());
+      setCodexProposal(proposal);
+      setCodexMsg("");
+    } catch (e) {
+      setCodexMsg(e instanceof Error ? e.message : "Codex 调用失败");
+    } finally {
+      setCodexBusy(false);
+    }
+  }
+
+  function progressOf(sections: { id: string }[]) {
+    if (!sections.length) return 0;
+    const total = sections.reduce((sum, s) => sum + (getScore(s.id) || 0), 0);
+    return total / (sections.length * 10);
+  }
+
+  async function onCodexConfirm() {
+    if (!codexProposal || codexBusy) return;
+    setCodexBusy(true);
+    setCodexMsg("写入中…");
+    try {
+      await codexCommit(codexProposal);
+      setCodexMsg("已添加，正在刷新…");
+      window.setTimeout(() => window.location.reload(), 1200);
+    } catch (e) {
+      setCodexMsg(e instanceof Error ? e.message : "写入失败");
+    } finally {
+      setCodexBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!activeGroupId) return;
@@ -93,11 +135,22 @@ export default function Sidebar({
           <span>{ratedCount} rated</span>
         </div>
 
+        <div className="overall-progress" title="复习进度：熟练度总分 / 满分">
+          <div className="overall-progress__head">
+            <span>复习进度</span>
+            <b>{Math.round(progressOf(catalog.sections) * 100)}%</b>
+          </div>
+          <div className="overall-progress__track">
+            <i style={{ width: `${progressOf(catalog.sections) * 100}%` }} />
+          </div>
+        </div>
+
         <nav className="topic-nav" aria-label="Research tracks">
           {catalog.groups.map((group, groupIndex) => {
             const sections = sectionsByGroup.get(group.id) || [];
             const isOpen = openGroups.has(group.id);
             const hasActive = activeGroupId === group.id;
+            const progress = progressOf(sections);
             return (
               <section
                 className={`topic-group ${hasActive ? "has-active" : ""}`}
@@ -116,6 +169,16 @@ export default function Sidebar({
                   <span className="topic-group__count">{sections.length}</span>
                   <ChevronIcon className={isOpen ? "is-rotated" : ""} />
                 </button>
+                <div
+                  className="topic-group__progress"
+                  title={`本组复习进度 ${Math.round(progress * 100)}%`}
+                >
+                  <i
+                    className={progress >= 0.9 ? "is-done" : ""}
+                    style={{ width: `${progress * 100}%` }}
+                  />
+                  <em>{Math.round(progress * 100)}%</em>
+                </div>
                 {isOpen ? (
                   <div className="topic-group__links">
                     {sections.map((section) => (
@@ -136,6 +199,60 @@ export default function Sidebar({
             );
           })}
         </nav>
+
+        <div className="codex-ask">
+          <div className="codex-ask__row">
+            <input
+              className="codex-ask__input"
+              placeholder="让 Codex 读源码写问答…"
+              value={codexInput}
+              onChange={(e) => setCodexInput(e.target.value)}
+              disabled={codexBusy}
+            />
+            <button
+              type="button"
+              className="codex-ask__send"
+              onClick={onCodexAsk}
+              disabled={codexBusy || !codexInput.trim()}
+              aria-label="提交给 Codex"
+            >
+              {codexBusy ? "…" : "➤"}
+            </button>
+          </div>
+          {codexMsg ? <p className="codex-ask__msg">{codexMsg}</p> : null}
+          {codexProposal ? (
+            <div className="codex-proposal">
+              <p className="codex-proposal__title">{codexProposal.title}</p>
+              <p className="codex-proposal__group">
+                放入分组：
+                {codexProposal.groupId
+                  ? `已有分组 #${codexProposal.groupId}`
+                  : `新建「${codexProposal.groupTitle || "Codex 源码问答"}」`}
+              </p>
+              {codexProposal.summary ? (
+                <p className="codex-proposal__summary">{codexProposal.summary}</p>
+              ) : null}
+              <div className="codex-proposal__actions">
+                <button
+                  type="button"
+                  className="codex-proposal__ok"
+                  onClick={onCodexConfirm}
+                  disabled={codexBusy}
+                >
+                  确认添加
+                </button>
+                <button
+                  type="button"
+                  className="codex-proposal__cancel"
+                  onClick={() => setCodexProposal(null)}
+                  disabled={codexBusy}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         <div className="sidebar__footer">
           <span>Compiled from source code</span>

@@ -408,9 +408,6 @@ export default function PracticePanel({ section, articleText }: PracticePanelPro
                             placeholder="针对这道题追问答疑…"
                             value={coachInput}
                             onChange={(e) => setCoachInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") onAskCoach(record);
-                            }}
                             disabled={coachLoading}
                           />
                           <button
