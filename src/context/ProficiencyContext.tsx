@@ -9,6 +9,7 @@ import {
 } from "react";
 
 const STORAGE_KEY = "agent-systems-field-guide:proficiency:v1";
+const API_URL = "/api/proficiency";
 
 type ProficiencyScores = Record<string, number>;
 
@@ -48,15 +49,58 @@ function persistScores(scores: ProficiencyScores) {
   }
 }
 
+async function fetchServerScores(): Promise<ProficiencyScores> {
+  const response = await fetch(API_URL, { cache: "no-store" });
+  if (!response.ok) throw new Error(`加载评分失败 (${response.status})`);
+  const data = (await response.json()) as { scores?: ProficiencyScores };
+  return data.scores || {};
+}
+
+async function uploadScores(scores: ProficiencyScores): Promise<ProficiencyScores> {
+  const response = await fetch(API_URL, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scores }),
+  });
+  if (!response.ok) throw new Error(`保存评分失败 (${response.status})`);
+  const data = (await response.json()) as { scores?: ProficiencyScores };
+  return data.scores || scores;
+}
+
 export function ProficiencyProvider({ children }: { children: ReactNode }) {
   const [scores, setScores] = useState<ProficiencyScores>(readScores);
 
   useEffect(() => {
+    let active = true;
+
+    async function syncScores() {
+      const localScores = readScores();
+      try {
+        const serverScores = await fetchServerScores();
+        const missingScores = Object.fromEntries(
+          Object.entries(localScores).filter(([sectionId]) => !(sectionId in serverScores)),
+        );
+        const next =
+          Object.keys(missingScores).length > 0
+            ? await uploadScores({ ...serverScores, ...missingScores })
+            : serverScores;
+        if (!active) return;
+        persistScores(next);
+        setScores(next);
+      } catch {
+        // Keep the local cache available if the server is temporarily unreachable.
+      }
+    }
+
     const handleStorage = (event: StorageEvent) => {
       if (event.key === STORAGE_KEY) setScores(readScores());
     };
     window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
+    void syncScores();
+    return () => {
+      active = false;
+      window.removeEventListener("storage", handleStorage);
+    };
   }, []);
 
   const setScore = useCallback((sectionId: string, score: number) => {
@@ -71,6 +115,7 @@ export function ProficiencyProvider({ children }: { children: ReactNode }) {
     setScores((current) => {
       const next = { ...current, [sectionId]: score };
       persistScores(next);
+      void uploadScores({ [sectionId]: score }).catch(() => {});
       return next;
     });
   }, []);
@@ -81,6 +126,11 @@ export function ProficiencyProvider({ children }: { children: ReactNode }) {
       const next = { ...current };
       delete next[sectionId];
       persistScores(next);
+      void fetch(API_URL, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sectionId, score: null }),
+      }).catch(() => {});
       return next;
     });
   }, []);

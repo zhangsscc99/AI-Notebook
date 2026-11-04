@@ -1,12 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  appendCoachMessage,
+  deletePracticeRecord,
+  practiceHistory,
+  proficiencyScores,
+  savePracticeAttempt,
+  setProficiencyScore,
+  setProficiencyScores,
+} from "./database.mjs";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
-const dataDirectory = path.join(projectRoot, "data");
-const historyFile = path.join(dataDirectory, "practice-history.json");
 
 try {
   const envFile = path.join(projectRoot, ".env");
@@ -57,23 +63,6 @@ function readBody(request) {
     });
     request.on("error", reject);
   });
-}
-
-function readHistory() {
-  try {
-    const raw = fs.readFileSync(historyFile, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeHistory(records) {
-  fs.mkdirSync(dataDirectory, { recursive: true });
-  const tempFile = `${historyFile}.${process.pid}.tmp`;
-  fs.writeFileSync(tempFile, `${JSON.stringify(records, null, 2)}\n`);
-  fs.renameSync(tempFile, historyFile);
 }
 
 async function chat(messages, { temperature = 0.7 } = {}) {
@@ -192,17 +181,11 @@ async function answerCoach(body, response) {
   )).slice(0, 400);
 
   if (recordId) {
-    const records = readHistory();
-    const target = records.find((r) => r.id === recordId);
-    if (target) {
-      if (!Array.isArray(target.coach)) target.coach = [];
-      target.coach.push({
-        q: String(userQuestion).slice(0, 2000),
-        reply,
-        at: new Date().toISOString(),
-      });
-      writeHistory(records);
-    }
+    appendCoachMessage({
+      recordId,
+      question: String(userQuestion).slice(0, 2000),
+      reply,
+    });
   }
 
   sendJson(response, 200, { reply });
@@ -401,37 +384,17 @@ function upsertAttempt(body, response) {
     return sendJson(response, 400, { error: "缺少必要字段" });
   }
 
-  const records = readHistory();
-  const recordId = id || crypto.randomUUID();
-  const attempt = {
-    answer: String(answer).slice(0, 20000),
-    score: Math.max(1, Math.min(10, Math.round(score))),
-    analysis: String(analysis || "").slice(0, 8000),
-    at: new Date().toISOString(),
-  };
-
-  const existing = records.find((r) => r.id === recordId);
-  if (existing) {
-    existing.attempts.push(attempt);
-    existing.bestScore = Math.max(existing.bestScore, attempt.score);
-  } else {
-    records.unshift({
-      id: recordId,
-      sectionId: String(sectionId),
-      sectionTitle: String(sectionTitle || ""),
-      groupTitle: String(groupTitle || ""),
-      question: String(question).slice(0, 4000),
-      bestScore: attempt.score,
-      createdAt: attempt.at,
-      attempts: [attempt],
-    });
-  }
-
-  writeHistory(records);
-  sendJson(response, 200, {
-    id: recordId,
-    bestScore: existing ? existing.bestScore : attempt.score,
+  const saved = savePracticeAttempt({
+    id,
+    sectionId,
+    sectionTitle,
+    groupTitle,
+    question,
+    answer,
+    score,
+    analysis,
   });
+  sendJson(response, 200, saved);
 }
 
 export async function handleApiRequest(request, response) {
@@ -453,7 +416,7 @@ export async function handleApiRequest(request, response) {
       return await answerCoach(await readBody(request), response);
     }
     if (request.method === "GET" && pathname === "/api/history") {
-      const records = readHistory();
+      const records = practiceHistory();
       return sendJson(response, 200, { records });
     }
     if (request.method === "POST" && pathname === "/api/history") {
@@ -461,7 +424,27 @@ export async function handleApiRequest(request, response) {
     }
     if (request.method === "DELETE" && pathname === "/api/history") {
       const { id } = await readBody(request);
-      writeHistory(readHistory().filter((r) => r.id !== id));
+      deletePracticeRecord(id);
+      return sendJson(response, 200, { ok: true });
+    }
+    if (request.method === "GET" && pathname === "/api/proficiency") {
+      return sendJson(response, 200, { scores: proficiencyScores() });
+    }
+    if (request.method === "PUT" && pathname === "/api/proficiency") {
+      const body = await readBody(request);
+      if (body.scores && typeof body.scores === "object") {
+        setProficiencyScores(body.scores);
+      } else if (body.sectionId) {
+        setProficiencyScore(body.sectionId, body.score);
+      } else {
+        return sendJson(response, 400, { error: "缺少评分数据" });
+      }
+      return sendJson(response, 200, { ok: true, scores: proficiencyScores() });
+    }
+    if (request.method === "DELETE" && pathname === "/api/proficiency") {
+      const { sectionId } = await readBody(request);
+      if (!sectionId) return sendJson(response, 400, { error: "缺少 sectionId" });
+      setProficiencyScore(sectionId, null);
       return sendJson(response, 200, { ok: true });
     }
     sendJson(response, 404, { error: "Unknown API route" });

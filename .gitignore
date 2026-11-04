@@ -7,5 +7,6 @@ dist/
 public/sections/
 public/search-index.json
 src/data/catalog.json
-data/
+data/*
+!data/ai-notebook.sqlite3
 .env
