@@ -61,7 +61,13 @@ export default function Sidebar({
   const [studyPlans, setStudyPlans] = useState<StudyPlan[]>([]);
 
   useEffect(() => {
-    fetchStudyPlans().then(setStudyPlans).catch(() => {});
+    const refreshStudyPlans = () => {
+      fetchStudyPlans().then(setStudyPlans).catch(() => {});
+    };
+    refreshStudyPlans();
+    window.addEventListener("study-plans-changed", refreshStudyPlans);
+    return () =>
+      window.removeEventListener("study-plans-changed", refreshStudyPlans);
   }, [pathname]);
 
   async function onCodexAsk() {

@@ -29,6 +29,10 @@ export interface StudyPlanInput {
   status: StudyPlanStatus;
 }
 
+function notifyPlansChanged() {
+  window.dispatchEvent(new Event("study-plans-changed"));
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     cache: "no-store",
@@ -62,6 +66,7 @@ export async function createStudyPlan(input: StudyPlanInput): Promise<StudyPlan>
     method: "POST",
     body: JSON.stringify(input),
   });
+  notifyPlansChanged();
   return data.plan;
 }
 
@@ -76,6 +81,7 @@ export async function updateStudyPlan(
       body: JSON.stringify(input),
     },
   );
+  notifyPlansChanged();
   return data.plan;
 }
 
@@ -83,6 +89,7 @@ export async function deleteStudyPlan(id: string): Promise<void> {
   await request<{ ok: boolean }>(`/api/study-plans/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+  notifyPlansChanged();
 }
 
 export function planProgress(plan: StudyPlan): number {
