@@ -9,12 +9,24 @@ import { Link, useRouter } from "../router";
 import { ProficiencyTag } from "./Proficiency";
 import { useProficiency } from "../context/ProficiencyContext";
 import { codexCommit, codexDraft, type CodexProposal } from "../lib/practice";
+import {
+  fetchStudyPlans,
+  planProgress,
+  type StudyPlan,
+  type StudyPlanStatus,
+} from "../lib/studyPlans";
 
 interface SidebarProps {
   mobileOpen: boolean;
   closeMobile: () => void;
   openSearch: () => void;
 }
+
+const studyPlanStatusLabel: Record<StudyPlanStatus, string> = {
+  active: "进行中",
+  paused: "暂停",
+  completed: "完成",
+};
 
 function getActiveSectionId(pathname: string) {
   const match = pathname.match(/^\/section\/([^/]+)/);
@@ -46,6 +58,11 @@ export default function Sidebar({
   const [codexBusy, setCodexBusy] = useState(false);
   const [codexMsg, setCodexMsg] = useState("");
   const [codexProposal, setCodexProposal] = useState<CodexProposal | null>(null);
+  const [studyPlans, setStudyPlans] = useState<StudyPlan[]>([]);
+
+  useEffect(() => {
+    fetchStudyPlans().then(setStudyPlans).catch(() => {});
+  }, [pathname]);
 
   async function onCodexAsk() {
     if (!codexInput.trim() || codexBusy) return;
@@ -148,9 +165,19 @@ export default function Sidebar({
         <nav className="topic-nav" aria-label="Research tracks">
           {catalog.groups.map((group, groupIndex) => {
             const sections = sectionsByGroup.get(group.id) || [];
+            const isStudyPlanGroup = group.id === "studyPlanTocGroup";
+            const visibleSections = isStudyPlanGroup
+              ? sections.filter((section) => section.id !== "study-plan-week-template")
+              : sections;
             const isOpen = openGroups.has(group.id);
             const hasActive = activeGroupId === group.id;
-            const progress = progressOf(sections);
+            const progress = isStudyPlanGroup
+              ? studyPlans.length
+                ? studyPlans.reduce((sum, plan) => sum + planProgress(plan), 0) /
+                  studyPlans.length
+                : 0
+              : progressOf(sections);
+            const itemCount = visibleSections.length + (isStudyPlanGroup ? studyPlans.length : 0);
             return (
               <section
                 className={`topic-group ${hasActive ? "has-active" : ""}`}
@@ -166,7 +193,7 @@ export default function Sidebar({
                     {String(groupIndex + 1).padStart(2, "0")}
                   </span>
                   <span className="topic-group__title">{group.title}</span>
-                  <span className="topic-group__count">{sections.length}</span>
+                  <span className="topic-group__count">{itemCount}</span>
                   <ChevronIcon className={isOpen ? "is-rotated" : ""} />
                 </button>
                 <div
@@ -181,7 +208,7 @@ export default function Sidebar({
                 </div>
                 {isOpen ? (
                   <div className="topic-group__links">
-                    {sections.map((section) => (
+                    {visibleSections.map((section) => (
                       <Link
                         key={section.id}
                         to={`/section/${section.id}`}
@@ -193,6 +220,41 @@ export default function Sidebar({
                         <ProficiencyTag sectionId={section.id} compact />
                       </Link>
                     ))}
+                    {isStudyPlanGroup ? (
+                      <>
+                        <Link
+                          to="/plans"
+                          className={`topic-link topic-link--plan ${pathname === "/plans" ? "is-active" : ""}`}
+                          onClick={closeMobile}
+                        >
+                          <span>OPS</span>
+                          <span>学习计划工作台</span>
+                          <b>{studyPlans.length}</b>
+                        </Link>
+                        {studyPlans.map((plan, planIndex) => (
+                          <Link
+                            key={plan.id}
+                            to={`/plans/${plan.id}`}
+                            className={`topic-link topic-link--plan ${pathname === `/plans/${plan.id}` ? "is-active" : ""}`}
+                            onClick={closeMobile}
+                          >
+                            <span>{String(planIndex + 1).padStart(2, "0")}</span>
+                            <span>{plan.title}</span>
+                            <b data-status={plan.status}>
+                              {studyPlanStatusLabel[plan.status]}
+                            </b>
+                          </Link>
+                        ))}
+                        <Link
+                          to="/plans/new"
+                          className="topic-link topic-link--plan-new"
+                          onClick={closeMobile}
+                        >
+                          <span>＋</span>
+                          <span>新建学习计划</span>
+                        </Link>
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
               </section>

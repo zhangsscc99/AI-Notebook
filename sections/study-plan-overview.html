@@ -1,15 +1,15 @@
 <div class="section-header"><div class="index">PLAN</div><h2>学习计划使用说明</h2></div>
-          <p>这个分组是纯手工维护的学习计划清单：每条计划是一个章节，内容自己写（目标、范围、资料、验收标准），页头顶部的 <strong>1-10 熟练度评分</strong>当作完成度来打——打完会自动计入侧栏的分组进度条和总进度条。</p>
+          <p>这个分组现在是可编辑的学习计划工作台：每条计划都保存在服务端 SQLite 数据库，支持创建、查看、修改、勾选清单、暂停、完成和删除。数据库文件会随 Git 仓库一起提交，更换机器后可以直接恢复。</p>
 
-          <h3>怎么加一条新计划</h3>
+          <h3>怎么管理计划</h3>
           <div class="flow">
-            <div class="flow-step" data-step="1"><strong>新建章节文件。</strong>在 sections/ 下新建 study-plan-xxx.html，照抄本条目的结构：section-header + 目标 + 计划清单 + 验收标准。</div>
-            <div class="flow-step" data-step="2"><strong>注册目录。</strong>在 content-source/index.html 的 studyPlanTocGroup 分组里加一行 <code class="inline">&lt;a href="#study-plan-xxx"&gt;NN · 计划名&lt;/a&gt;</code>，并在 &lt;/main&gt; 前加对应的 lazy-section 占位。</div>
-            <div class="flow-step" data-step="3"><strong>重新生成。</strong>运行 <code class="inline">npm run content</code>（dev 模式下 npm run dev 会自动跑），目录和搜索索引就会更新。</div>
-            <div class="flow-step" data-step="4"><strong>打完成度。</strong>打开这条计划的页面，用顶部 1-10 打分：1=刚开个头，5=完成一半，9-10=彻底搞定。分数存在浏览器本地，随时可改。</div>
+            <div class="flow-step" data-step="1"><strong>进入工作台。</strong>点击侧栏的「学习计划工作台」，或者直接打开 <code class="inline">/plans</code>。</div>
+            <div class="flow-step" data-step="2"><strong>创建计划。</strong>填写标题、摘要、目标、截止日期、执行清单和验收标准。</div>
+            <div class="flow-step" data-step="3"><strong>推进计划。</strong>在详情页直接勾选清单项，并切换进行中、暂停或已完成状态。</div>
+            <div class="flow-step" data-step="4"><strong>编辑或删除。</strong>计划详情页提供完整编辑入口；所有修改即时写入 SQLite。</div>
           </div>
 
           <h3>建议的计划条目写法</h3>
           <div class="callout"><strong>每条计划建议包含：</strong>目标（要达到什么水平）、范围（复习哪些资料/章节）、输出（能给别人讲出来/做题 9 分以上/写出笔记）、时间盒（哪天前完成）。计划写得越具体，完成度越好打。</div>
 
-          <p>打分建议：<strong>先复习内容再打分</strong>——可以用每个章节页里的「面试练习」做题自测，做到 9 分以上再把熟练度打上去，进度条才反映真实掌握度。</p>
+          <p>完成度由清单勾选比例自动计算。需要验证真实掌握度时，仍可使用每个章节页里的「面试练习」做题自测。</p>

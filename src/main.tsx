@@ -9,6 +9,7 @@ import { RouterProvider } from "./router";
 import { ProficiencyProvider } from "./context/ProficiencyContext";
 import "./styles/app.css";
 import "./styles/article.css";
+import "./styles/study-plans.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

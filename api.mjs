@@ -4,12 +4,17 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   appendCoachMessage,
+  createStudyPlan,
   deletePracticeRecord,
+  deleteStudyPlan,
+  getStudyPlan,
+  listStudyPlans,
   practiceHistory,
   proficiencyScores,
   savePracticeAttempt,
   setProficiencyScore,
   setProficiencyScores,
+  updateStudyPlan,
 } from "./database.mjs";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -400,6 +405,37 @@ function upsertAttempt(body, response) {
 export async function handleApiRequest(request, response) {
   const pathname = (request.url || "").split("?")[0];
   try {
+    const studyPlanMatch = pathname.match(/^\/api\/study-plans(?:\/([^/]+))?$/);
+    if (studyPlanMatch) {
+      const planId = studyPlanMatch[1]
+        ? decodeURIComponent(studyPlanMatch[1])
+        : null;
+      if (request.method === "GET" && !planId) {
+        return sendJson(response, 200, { plans: listStudyPlans() });
+      }
+      if (request.method === "GET" && planId) {
+        const plan = getStudyPlan(planId);
+        return plan
+          ? sendJson(response, 200, { plan })
+          : sendJson(response, 404, { error: "学习计划不存在" });
+      }
+      if (request.method === "POST" && !planId) {
+        return sendJson(response, 201, {
+          plan: createStudyPlan(await readBody(request)),
+        });
+      }
+      if (request.method === "PUT" && planId) {
+        const plan = updateStudyPlan(planId, await readBody(request));
+        return plan
+          ? sendJson(response, 200, { plan })
+          : sendJson(response, 404, { error: "学习计划不存在" });
+      }
+      if (request.method === "DELETE" && planId) {
+        return deleteStudyPlan(planId)
+          ? sendJson(response, 200, { ok: true })
+          : sendJson(response, 404, { error: "学习计划不存在" });
+      }
+    }
     if (request.method === "POST" && pathname === "/api/question") {
       return await generateQuestion(await readBody(request), response);
     }

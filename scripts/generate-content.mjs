@@ -11,7 +11,7 @@ const dataDirectory = path.join(root, "src", "data");
 
 const groupDescriptions = {
   studyPlanTocGroup:
-    "手工维护的学习计划清单：每条计划含目标、清单与验收标准，用熟练度打分跟踪完成度。",
+    "可编辑的学习计划工作台：每条计划含目标、清单与验收标准，进度保存在 SQLite 并可随 Git 同步。",
   memoryTocGroup:
     "OpenClaw 的记忆分层、检索链路、写入机制与安全边界。",
   toolllmTocGroup:

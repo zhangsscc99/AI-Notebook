@@ -58,6 +58,23 @@ db.exec(`
     updated_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS study_plans (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    goal TEXT NOT NULL DEFAULT '',
+    checklist_json TEXT NOT NULL DEFAULT '[]',
+    acceptance TEXT NOT NULL DEFAULT '',
+    deadline TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+      CHECK (status IN ('active', 'paused', 'completed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS study_plans_updated_at
+    ON study_plans(updated_at DESC);
+
   CREATE TABLE IF NOT EXISTS app_metadata (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -311,7 +328,203 @@ function setProficiencyScores(scores) {
   });
 }
 
+function normalizeChecklist(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      if (typeof item === "string") {
+        return { id: crypto.randomUUID(), text: item.trim(), done: false };
+      }
+      return {
+        id: String(item?.id || crypto.randomUUID()),
+        text: String(item?.text || "").trim(),
+        done: Boolean(item?.done),
+      };
+    })
+    .filter((item) => item.text);
+}
+
+function normalizeStudyPlan(plan) {
+  const status = ["active", "paused", "completed"].includes(plan?.status)
+    ? plan.status
+    : "active";
+  return {
+    title: String(plan?.title || "").trim(),
+    summary: String(plan?.summary || "").trim(),
+    goal: String(plan?.goal || "").trim(),
+    checklist: normalizeChecklist(plan?.checklist),
+    acceptance: String(plan?.acceptance || "").trim(),
+    deadline: plan?.deadline ? String(plan.deadline).slice(0, 10) : null,
+    status,
+  };
+}
+
+function mapStudyPlan(row) {
+  let checklist = [];
+  try {
+    checklist = normalizeChecklist(JSON.parse(row.checklistJson));
+  } catch {
+    checklist = [];
+  }
+  return {
+    id: row.id,
+    title: row.title,
+    summary: row.summary,
+    goal: row.goal,
+    checklist,
+    acceptance: row.acceptance,
+    deadline: row.deadline,
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function listStudyPlans() {
+  return db
+    .prepare(`
+      SELECT
+        id,
+        title,
+        summary,
+        goal,
+        checklist_json AS checklistJson,
+        acceptance,
+        deadline,
+        status,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM study_plans
+      ORDER BY
+        CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
+        updated_at DESC
+    `)
+    .all()
+    .map(mapStudyPlan);
+}
+
+function getStudyPlan(id) {
+  if (!id) return null;
+  const row = db
+    .prepare(`
+      SELECT
+        id,
+        title,
+        summary,
+        goal,
+        checklist_json AS checklistJson,
+        acceptance,
+        deadline,
+        status,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM study_plans
+      WHERE id = ?
+    `)
+    .get(String(id));
+  return row ? mapStudyPlan(row) : null;
+}
+
+function createStudyPlan(input) {
+  const plan = normalizeStudyPlan(input);
+  if (!plan.title) throw new Error("计划标题不能为空");
+  const id = String(input?.id || `plan-${crypto.randomUUID()}`);
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO study_plans
+      (id, title, summary, goal, checklist_json, acceptance, deadline, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    plan.title,
+    plan.summary,
+    plan.goal,
+    JSON.stringify(plan.checklist),
+    plan.acceptance,
+    plan.deadline,
+    plan.status,
+    now,
+    now,
+  );
+  return getStudyPlan(id);
+}
+
+function updateStudyPlan(id, input) {
+  const existing = getStudyPlan(id);
+  if (!existing) return null;
+  const plan = normalizeStudyPlan({
+    ...existing,
+    ...input,
+    checklist: input?.checklist ?? existing.checklist,
+  });
+  if (!plan.title) throw new Error("计划标题不能为空");
+  db.prepare(`
+    UPDATE study_plans
+    SET title = ?,
+        summary = ?,
+        goal = ?,
+        checklist_json = ?,
+        acceptance = ?,
+        deadline = ?,
+        status = ?,
+        updated_at = ?
+    WHERE id = ?
+  `).run(
+    plan.title,
+    plan.summary,
+    plan.goal,
+    JSON.stringify(plan.checklist),
+    plan.acceptance,
+    plan.deadline,
+    plan.status,
+    new Date().toISOString(),
+    String(id),
+  );
+  return getStudyPlan(id);
+}
+
+function deleteStudyPlan(id) {
+  if (!id) return false;
+  return db.prepare("DELETE FROM study_plans WHERE id = ?").run(String(id)).changes > 0;
+}
+
+function seedExampleStudyPlan() {
+  const migrationKey = "study-plan-example-v1";
+  if (db.prepare("SELECT value FROM app_metadata WHERE key = ?").get(migrationKey)) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO study_plans
+      (id, title, summary, goal, checklist_json, acceptance, deadline, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "study-plan-week-template",
+    "西门子医疗一面冲刺周",
+    "把高频面试考点压缩成一周冲刺，并用面试练习验证真实掌握度。",
+    "一周内把西门子医疗一面高频考点全部过到面试练习 9 分以上，覆盖项目讲解、设计模式、设计原则、K8s、并发与 RAG 设计。",
+    JSON.stringify([
+      { id: crypto.randomUUID(), text: "Day 1-2：完成中英文项目讲稿，并用面试练习验证", done: false },
+      { id: crypto.randomUUID(), text: "Day 3：复习设计模式与设计原则", done: false },
+      { id: crypto.randomUUID(), text: "Day 4：复习 K8s、CNN、锁、B+ 树与线程", done: false },
+      { id: crypto.randomUUID(), text: "Day 5-6：完成 RAG 系统设计与 Harness 专题", done: false },
+      { id: crypto.randomUUID(), text: "Day 7：完成一轮全流程模拟面试", done: false },
+    ]),
+    "每个专题的面试练习至少达到 9 分；英文项目介绍能连续讲完；薄弱项完成一轮追问复盘。",
+    null,
+    "active",
+    now,
+    now,
+  );
+  db.prepare("INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)").run(
+    migrationKey,
+    now,
+  );
+}
+
 migrateLegacyHistory();
+seedExampleStudyPlan();
 
 export {
   databaseFile,
@@ -322,4 +535,9 @@ export {
   proficiencyScores,
   setProficiencyScore,
   setProficiencyScores,
+  listStudyPlans,
+  getStudyPlan,
+  createStudyPlan,
+  updateStudyPlan,
+  deleteStudyPlan,
 };
