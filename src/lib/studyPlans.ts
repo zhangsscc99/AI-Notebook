@@ -29,6 +29,17 @@ export interface StudyPlanInput {
   status: StudyPlanStatus;
 }
 
+export function createClientId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function notifyPlansChanged() {
   window.dispatchEvent(new Event("study-plans-changed"));
 }

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowIcon } from "../components/Icons";
 import { Link } from "../router";
 import {
+  createClientId,
   createStudyPlan,
   deleteStudyPlan,
   fetchStudyPlan,
@@ -48,7 +49,7 @@ function toInput(plan: StudyPlan): StudyPlanInput {
 }
 
 function newChecklistItem(): StudyPlanChecklistItem {
-  return { id: crypto.randomUUID(), text: "", done: false };
+  return { id: createClientId(), text: "", done: false };
 }
 
 export default function StudyPlanPage({
