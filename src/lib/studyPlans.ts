@@ -1,10 +1,8 @@
-export type StudyPlanStatus = "active" | "paused" | "completed";
-
 export interface StudyPlan {
   id: string;
   title: string;
   body: string;
-  status: StudyPlanStatus;
+  rating: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -12,7 +10,7 @@ export interface StudyPlan {
 export interface StudyPlanInput {
   title: string;
   body: string;
-  status: StudyPlanStatus;
+  rating: number | null;
 }
 
 function notifyPlansChanged() {

@@ -4,14 +4,7 @@ import { Link } from "../router";
 import {
   fetchStudyPlans,
   type StudyPlan,
-  type StudyPlanStatus,
 } from "../lib/studyPlans";
-
-const statusLabel: Record<StudyPlanStatus, string> = {
-  active: "进行中",
-  paused: "已暂停",
-  completed: "已完成",
-};
 
 export default function StudyPlansPage() {
   const [plans, setPlans] = useState<StudyPlan[]>([]);
@@ -86,7 +79,6 @@ export default function StudyPlansPage() {
           return (
             <Link
               className="plan-card"
-              data-status={plan.status}
               to={`/plans/${plan.id}`}
               key={plan.id}
             >
@@ -94,12 +86,15 @@ export default function StudyPlansPage() {
                 <span className="plan-card__number">
                   {String(index + 1).padStart(2, "0")}
                 </span>
-                <span className="plan-card__status">{statusLabel[plan.status]}</span>
+                <span className="plan-card__status">
+                  {plan.rating ? `${plan.rating}/10` : "未评分"}
+                </span>
               </header>
               <h2>{plan.title}</h2>
               <p>{plan.body.trim().slice(0, 220) || "空白计划，打开后开始编辑。"}</p>
               <footer>
                 <span>更新 {plan.updatedAt.slice(0, 10)}</span>
+                <span>{plan.rating ? `评分 ${plan.rating}/10` : "尚未评分"}</span>
                 <ArrowIcon />
               </footer>
             </Link>

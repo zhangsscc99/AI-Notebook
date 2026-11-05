@@ -7,7 +7,6 @@ import {
   fetchStudyPlan,
   updateStudyPlan,
   type StudyPlan,
-  type StudyPlanStatus,
 } from "../lib/studyPlans";
 
 interface StudyPlanPageProps {
@@ -15,12 +14,6 @@ interface StudyPlanPageProps {
   editing?: boolean;
   creating?: boolean;
 }
-
-const statusLabel: Record<StudyPlanStatus, string> = {
-  active: "进行中",
-  paused: "已暂停",
-  completed: "已完成",
-};
 
 export default function StudyPlanPage({
   planId,
@@ -44,7 +37,7 @@ export default function StudyPlanPage({
       createStudyPlan({
         title: "未命名学习计划",
         body: "",
-        status: "active",
+        rating: null,
       })
         .then((created) => {
           window.location.replace(`/plans/${created.id}/edit`);
@@ -84,7 +77,7 @@ export default function StudyPlanPage({
       const updated = await updateStudyPlan(plan.id, {
         title: title.trim() || "未命名学习计划",
         body,
-        status: plan.status,
+        rating: plan.rating,
       });
       setPlan(updated);
       setTitle(updated.title);
@@ -96,7 +89,7 @@ export default function StudyPlanPage({
     }
   }
 
-  async function changeStatus(status: StudyPlanStatus) {
+  async function ratePlan(rating: number) {
     if (!plan || saving) return;
     setSaving(true);
     setError("");
@@ -104,11 +97,11 @@ export default function StudyPlanPage({
       const updated = await updateStudyPlan(plan.id, {
         title: plan.title,
         body: plan.body,
-        status,
+        rating,
       });
       setPlan(updated);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "更新状态失败");
+      setError(reason instanceof Error ? reason.message : "评分失败");
     } finally {
       setSaving(false);
     }
@@ -202,7 +195,7 @@ export default function StudyPlanPage({
   }
 
   return (
-    <div className="plan-detail-page" data-status={plan.status}>
+    <div className="plan-detail-page">
       <header className="plan-detail-hero plan-detail-hero--simple">
         <div className="plan-detail-hero__crumb">
           <Link to="/">Atlas</Link>
@@ -211,7 +204,9 @@ export default function StudyPlanPage({
         </div>
         <div className="plan-detail-hero__grid">
           <div>
-            <p className="kicker">STUDY PLAN / {statusLabel[plan.status]}</p>
+            <p className="kicker">
+              STUDY PLAN / {plan.rating ? `${plan.rating} OF 10` : "UNRATED"}
+            </p>
             <h1>{plan.title}</h1>
             <div className="plan-detail-actions">
               <Link to={`/plans/${plan.id}/edit`}>编辑页面</Link>
@@ -220,9 +215,9 @@ export default function StudyPlanPage({
               </button>
             </div>
           </div>
-          <aside className="plan-status-board">
-            <span>STATUS</span>
-            <strong>{statusLabel[plan.status]}</strong>
+          <aside className="plan-status-board plan-rating-board">
+            <span>PLAN RATING</span>
+            <strong>{plan.rating ? `${plan.rating}/10` : "—"}</strong>
             <small>更新于 {plan.updatedAt.slice(0, 10)}</small>
           </aside>
         </div>
@@ -240,20 +235,22 @@ export default function StudyPlanPage({
           </div>
         )}
 
-        <aside className="plan-status-switch">
-          {(["active", "paused", "completed"] as StudyPlanStatus[]).map(
-            (status) => (
+        <aside className="plan-rating-picker">
+          <span>给这条计划评分</span>
+          <div className="plan-rating-scale" role="group" aria-label="计划评分">
+            {Array.from({ length: 10 }, (_, index) => index + 1).map((rating) => (
               <button
                 type="button"
-                key={status}
-                aria-pressed={plan.status === status}
-                onClick={() => changeStatus(status)}
+                key={rating}
+                aria-pressed={plan.rating === rating}
+                onClick={() => ratePlan(rating)}
                 disabled={saving}
               >
-                {statusLabel[status]}
+                {rating}
               </button>
-            ),
-          )}
+            ))}
+          </div>
+          <p>{plan.rating ? `当前评分 ${plan.rating}/10` : "还没有评分"}</p>
         </aside>
       </main>
     </div>

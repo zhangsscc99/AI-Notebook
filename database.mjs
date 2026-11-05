@@ -62,6 +62,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     body TEXT NOT NULL DEFAULT '',
+    rating INTEGER CHECK (rating BETWEEN 1 AND 10),
     summary TEXT NOT NULL DEFAULT '',
     goal TEXT NOT NULL DEFAULT '',
     checklist_json TEXT NOT NULL DEFAULT '[]',
@@ -88,6 +89,9 @@ const studyPlanColumns = db
   .map((column) => column.name);
 if (!studyPlanColumns.includes("body")) {
   db.exec("ALTER TABLE study_plans ADD COLUMN body TEXT NOT NULL DEFAULT ''");
+}
+if (!studyPlanColumns.includes("rating")) {
+  db.exec("ALTER TABLE study_plans ADD COLUMN rating INTEGER");
 }
 
 function transaction(operation) {
@@ -360,6 +364,10 @@ function normalizeStudyPlan(plan) {
   return {
     title: String(plan?.title || "").trim(),
     body: String(plan?.body || "").trim(),
+    rating:
+      Number(plan?.rating) >= 1 && Number(plan?.rating) <= 10
+        ? Math.round(Number(plan.rating))
+        : null,
     summary: String(plan?.summary || "").trim(),
     goal: String(plan?.goal || "").trim(),
     checklist: normalizeChecklist(plan?.checklist),
@@ -380,12 +388,12 @@ function mapStudyPlan(row) {
     id: row.id,
     title: row.title,
     body: row.body,
+    rating: row.rating ?? null,
     summary: row.summary,
     goal: row.goal,
     checklist,
     acceptance: row.acceptance,
     deadline: row.deadline,
-    status: row.status,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -398,6 +406,7 @@ function listStudyPlans() {
         id,
         title,
         body,
+        rating,
         summary,
         goal,
         checklist_json AS checklistJson,
@@ -407,9 +416,7 @@ function listStudyPlans() {
         created_at AS createdAt,
         updated_at AS updatedAt
       FROM study_plans
-      ORDER BY
-        CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
-        updated_at DESC
+      ORDER BY updated_at DESC
     `)
     .all()
     .map(mapStudyPlan);
@@ -423,6 +430,7 @@ function getStudyPlan(id) {
         id,
         title,
         body,
+        rating,
         summary,
         goal,
         checklist_json AS checklistJson,
@@ -445,12 +453,13 @@ function createStudyPlan(input) {
   const now = new Date().toISOString();
   db.prepare(`
     INSERT INTO study_plans
-      (id, title, body, summary, goal, checklist_json, acceptance, deadline, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, title, body, rating, summary, goal, checklist_json, acceptance, deadline, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     plan.title,
     plan.body,
+    plan.rating,
     plan.summary,
     plan.goal,
     JSON.stringify(plan.checklist),
@@ -476,6 +485,7 @@ function updateStudyPlan(id, input) {
     UPDATE study_plans
     SET title = ?,
         body = ?,
+        rating = ?,
         summary = ?,
         goal = ?,
         checklist_json = ?,
@@ -487,6 +497,7 @@ function updateStudyPlan(id, input) {
   `).run(
     plan.title,
     plan.body,
+    plan.rating,
     plan.summary,
     plan.goal,
     JSON.stringify(plan.checklist),

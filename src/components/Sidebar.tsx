@@ -12,7 +12,6 @@ import { codexCommit, codexDraft, type CodexProposal } from "../lib/practice";
 import {
   fetchStudyPlans,
   type StudyPlan,
-  type StudyPlanStatus,
 } from "../lib/studyPlans";
 
 interface SidebarProps {
@@ -20,12 +19,6 @@ interface SidebarProps {
   closeMobile: () => void;
   openSearch: () => void;
 }
-
-const studyPlanStatusLabel: Record<StudyPlanStatus, string> = {
-  active: "进行中",
-  paused: "暂停",
-  completed: "完成",
-};
 
 function getActiveSectionId(pathname: string) {
   const match = pathname.match(/^\/section\/([^/]+)/);
@@ -178,8 +171,8 @@ export default function Sidebar({
             const hasActive = activeGroupId === group.id;
             const progress = isStudyPlanGroup
               ? studyPlans.length
-                ? studyPlans.filter((plan) => plan.status === "completed").length /
-                  studyPlans.length
+                ? studyPlans.reduce((sum, plan) => sum + (plan.rating || 0), 0) /
+                  (studyPlans.length * 10)
                 : 0
               : progressOf(sections);
             const itemCount = visibleSections.length + (isStudyPlanGroup ? studyPlans.length : 0);
@@ -245,9 +238,7 @@ export default function Sidebar({
                           >
                             <span>{String(planIndex + 1).padStart(2, "0")}</span>
                             <span>{plan.title}</span>
-                            <b data-status={plan.status}>
-                              {studyPlanStatusLabel[plan.status]}
-                            </b>
+                            <b>{plan.rating ? `${plan.rating}/10` : "—"}</b>
                           </Link>
                         ))}
                         <Link

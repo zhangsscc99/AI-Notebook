@@ -294,7 +294,7 @@
   max-width: 1120px;
   margin: 0 auto;
   padding: clamp(30px, 5vw, 70px) clamp(24px, 5vw, 70px);
-  grid-template-columns: minmax(0, 1fr) 150px;
+  grid-template-columns: minmax(0, 1fr) 230px;
   gap: clamp(24px, 5vw, 58px);
   align-items: start;
 }
@@ -336,6 +336,72 @@
 .plan-simple-page > .plan-status-switch {
   position: sticky;
   top: 24px;
+}
+
+.plan-rating-board strong {
+  font-family: var(--plan-display);
+  font-size: clamp(3rem, 5vw, 4.6rem);
+  font-weight: 420;
+  letter-spacing: -0.055em;
+  line-height: 0.9;
+}
+
+.plan-rating-picker {
+  position: sticky;
+  top: 24px;
+  padding: 18px;
+  border: 1px solid var(--plan-line);
+  background: rgba(255, 253, 247, 0.76);
+}
+
+.plan-rating-picker > span,
+.plan-rating-picker > p {
+  color: var(--plan-soft);
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.07em;
+}
+
+.plan-rating-picker > p {
+  margin: 14px 0 0;
+  letter-spacing: 0;
+}
+
+.plan-rating-scale {
+  display: grid;
+  margin-top: 12px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.plan-rating-scale button {
+  display: grid;
+  min-width: 0;
+  aspect-ratio: 1;
+  place-items: center;
+  color: var(--plan-soft);
+  border: 1px solid var(--plan-line);
+  background: #fff;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.plan-rating-scale button:hover {
+  color: var(--plan-accent);
+  border-color: var(--plan-accent);
+}
+
+.plan-rating-scale button[aria-pressed="true"] {
+  color: #fff;
+  border-color: var(--plan-accent);
+  background: var(--plan-accent);
+}
+
+.plan-rating-scale button:disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 .plan-editor-page--simple .plan-editor-header {
@@ -404,6 +470,14 @@
   .plan-simple-page > .plan-status-switch {
     position: static;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .plan-rating-picker {
+    position: static;
+  }
+
+  .plan-rating-scale {
+    grid-template-columns: repeat(10, minmax(0, 1fr));
   }
 
   .plan-page-body,
