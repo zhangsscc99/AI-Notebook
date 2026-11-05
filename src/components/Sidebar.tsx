@@ -11,7 +11,6 @@ import { useProficiency } from "../context/ProficiencyContext";
 import { codexCommit, codexDraft, type CodexProposal } from "../lib/practice";
 import {
   fetchStudyPlans,
-  planProgress,
   type StudyPlan,
   type StudyPlanStatus,
 } from "../lib/studyPlans";
@@ -179,7 +178,7 @@ export default function Sidebar({
             const hasActive = activeGroupId === group.id;
             const progress = isStudyPlanGroup
               ? studyPlans.length
-                ? studyPlans.reduce((sum, plan) => sum + planProgress(plan), 0) /
+                ? studyPlans.filter((plan) => plan.status === "completed").length /
                   studyPlans.length
                 : 0
               : progressOf(sections);

@@ -61,6 +61,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS study_plans (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
     summary TEXT NOT NULL DEFAULT '',
     goal TEXT NOT NULL DEFAULT '',
     checklist_json TEXT NOT NULL DEFAULT '[]',
@@ -80,6 +81,14 @@ db.exec(`
     value TEXT NOT NULL
   );
 `);
+
+const studyPlanColumns = db
+  .prepare("PRAGMA table_info(study_plans)")
+  .all()
+  .map((column) => column.name);
+if (!studyPlanColumns.includes("body")) {
+  db.exec("ALTER TABLE study_plans ADD COLUMN body TEXT NOT NULL DEFAULT ''");
+}
 
 function transaction(operation) {
   db.exec("BEGIN IMMEDIATE");
@@ -350,6 +359,7 @@ function normalizeStudyPlan(plan) {
     : "active";
   return {
     title: String(plan?.title || "").trim(),
+    body: String(plan?.body || "").trim(),
     summary: String(plan?.summary || "").trim(),
     goal: String(plan?.goal || "").trim(),
     checklist: normalizeChecklist(plan?.checklist),
@@ -369,6 +379,7 @@ function mapStudyPlan(row) {
   return {
     id: row.id,
     title: row.title,
+    body: row.body,
     summary: row.summary,
     goal: row.goal,
     checklist,
@@ -386,6 +397,7 @@ function listStudyPlans() {
       SELECT
         id,
         title,
+        body,
         summary,
         goal,
         checklist_json AS checklistJson,
@@ -410,6 +422,7 @@ function getStudyPlan(id) {
       SELECT
         id,
         title,
+        body,
         summary,
         goal,
         checklist_json AS checklistJson,
@@ -432,11 +445,12 @@ function createStudyPlan(input) {
   const now = new Date().toISOString();
   db.prepare(`
     INSERT INTO study_plans
-      (id, title, summary, goal, checklist_json, acceptance, deadline, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, title, body, summary, goal, checklist_json, acceptance, deadline, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     plan.title,
+    plan.body,
     plan.summary,
     plan.goal,
     JSON.stringify(plan.checklist),
@@ -461,6 +475,7 @@ function updateStudyPlan(id, input) {
   db.prepare(`
     UPDATE study_plans
     SET title = ?,
+        body = ?,
         summary = ?,
         goal = ?,
         checklist_json = ?,
@@ -471,6 +486,7 @@ function updateStudyPlan(id, input) {
     WHERE id = ?
   `).run(
     plan.title,
+    plan.body,
     plan.summary,
     plan.goal,
     JSON.stringify(plan.checklist),
@@ -488,39 +504,50 @@ function deleteStudyPlan(id) {
   return db.prepare("DELETE FROM study_plans WHERE id = ?").run(String(id)).changes > 0;
 }
 
+const examplePlanBody =
+  "目标\n一周内把西门子医疗一面高频考点全部过到面试练习 9 分以上，覆盖项目讲解、设计模式、设计原则、K8s、并发与 RAG 设计。\n\n计划清单\n1. Day 1-2：完成中英文项目讲稿，并用面试练习验证。\n2. Day 3：复习设计模式与设计原则。\n3. Day 4：复习 K8s、CNN、锁、B+ 树与线程。\n4. Day 5-6：完成 RAG 系统设计与 Harness 专题。\n5. Day 7：完成一轮全流程模拟面试。\n\n验收标准\n每个专题的面试练习至少达到 9 分；英文项目介绍能连续讲完；薄弱项完成一轮追问复盘。";
+
 function seedExampleStudyPlan() {
   const migrationKey = "study-plan-example-v1";
-  if (db.prepare("SELECT value FROM app_metadata WHERE key = ?").get(migrationKey)) {
-    return;
+  const alreadySeeded = db
+    .prepare("SELECT value FROM app_metadata WHERE key = ?")
+    .get(migrationKey);
+
+  if (!alreadySeeded) {
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT OR IGNORE INTO study_plans
+        (id, title, body, summary, goal, checklist_json, acceptance, deadline, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "study-plan-week-template",
+      "西门子医疗一面冲刺周",
+      examplePlanBody,
+      "把高频面试考点压缩成一周冲刺，并用面试练习验证真实掌握度。",
+      "一周内把西门子医疗一面高频考点全部过到面试练习 9 分以上，覆盖项目讲解、设计模式、设计原则、K8s、并发与 RAG 设计。",
+      JSON.stringify([
+        { id: crypto.randomUUID(), text: "Day 1-2：完成中英文项目讲稿，并用面试练习验证", done: false },
+        { id: crypto.randomUUID(), text: "Day 3：复习设计模式与设计原则", done: false },
+        { id: crypto.randomUUID(), text: "Day 4：复习 K8s、CNN、锁、B+ 树与线程", done: false },
+        { id: crypto.randomUUID(), text: "Day 5-6：完成 RAG 系统设计与 Harness 专题", done: false },
+        { id: crypto.randomUUID(), text: "Day 7：完成一轮全流程模拟面试", done: false },
+      ]),
+      "每个专题的面试练习至少达到 9 分；英文项目介绍能连续讲完；薄弱项完成一轮追问复盘。",
+      null,
+      "active",
+      now,
+      now,
+    );
+    db.prepare(
+      "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
+    ).run(migrationKey, now);
   }
 
-  const now = new Date().toISOString();
   db.prepare(`
-    INSERT OR IGNORE INTO study_plans
-      (id, title, summary, goal, checklist_json, acceptance, deadline, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "study-plan-week-template",
-    "西门子医疗一面冲刺周",
-    "把高频面试考点压缩成一周冲刺，并用面试练习验证真实掌握度。",
-    "一周内把西门子医疗一面高频考点全部过到面试练习 9 分以上，覆盖项目讲解、设计模式、设计原则、K8s、并发与 RAG 设计。",
-    JSON.stringify([
-      { id: crypto.randomUUID(), text: "Day 1-2：完成中英文项目讲稿，并用面试练习验证", done: false },
-      { id: crypto.randomUUID(), text: "Day 3：复习设计模式与设计原则", done: false },
-      { id: crypto.randomUUID(), text: "Day 4：复习 K8s、CNN、锁、B+ 树与线程", done: false },
-      { id: crypto.randomUUID(), text: "Day 5-6：完成 RAG 系统设计与 Harness 专题", done: false },
-      { id: crypto.randomUUID(), text: "Day 7：完成一轮全流程模拟面试", done: false },
-    ]),
-    "每个专题的面试练习至少达到 9 分；英文项目介绍能连续讲完；薄弱项完成一轮追问复盘。",
-    null,
-    "active",
-    now,
-    now,
-  );
-  db.prepare("INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)").run(
-    migrationKey,
-    now,
-  );
+    UPDATE study_plans
+    SET body = ?
+    WHERE id = 'study-plan-week-template' AND body = ''
+  `).run(examplePlanBody);
 }
 
 migrateLegacyHistory();

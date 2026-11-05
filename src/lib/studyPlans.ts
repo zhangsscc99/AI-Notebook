@@ -1,19 +1,9 @@
 export type StudyPlanStatus = "active" | "paused" | "completed";
 
-export interface StudyPlanChecklistItem {
-  id: string;
-  text: string;
-  done: boolean;
-}
-
 export interface StudyPlan {
   id: string;
   title: string;
-  summary: string;
-  goal: string;
-  checklist: StudyPlanChecklistItem[];
-  acceptance: string;
-  deadline: string | null;
+  body: string;
   status: StudyPlanStatus;
   createdAt: string;
   updatedAt: string;
@@ -21,23 +11,8 @@ export interface StudyPlan {
 
 export interface StudyPlanInput {
   title: string;
-  summary: string;
-  goal: string;
-  checklist: StudyPlanChecklistItem[];
-  acceptance: string;
-  deadline: string | null;
+  body: string;
   status: StudyPlanStatus;
-}
-
-export function createClientId(): string {
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
-  }
-  if (typeof globalThis.crypto?.getRandomValues === "function") {
-    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  }
-  return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function notifyPlansChanged() {
@@ -101,10 +76,4 @@ export async function deleteStudyPlan(id: string): Promise<void> {
     method: "DELETE",
   });
   notifyPlansChanged();
-}
-
-export function planProgress(plan: StudyPlan): number {
-  if (plan.status === "completed") return 1;
-  if (!plan.checklist.length) return plan.status === "active" ? 0.2 : 0;
-  return plan.checklist.filter((item) => item.done).length / plan.checklist.length;
 }

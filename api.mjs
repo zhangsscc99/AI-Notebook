@@ -420,8 +420,12 @@ export async function handleApiRequest(request, response) {
           : sendJson(response, 404, { error: "学习计划不存在" });
       }
       if (request.method === "POST" && !planId) {
+        const input = await readBody(request);
         return sendJson(response, 201, {
-          plan: createStudyPlan(await readBody(request)),
+          plan: createStudyPlan({
+            ...input,
+            title: String(input?.title || "").trim() || "未命名学习计划",
+          }),
         });
       }
       if (request.method === "PUT" && planId) {

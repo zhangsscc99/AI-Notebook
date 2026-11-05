@@ -3,7 +3,6 @@ import { ArrowIcon } from "../components/Icons";
 import { Link } from "../router";
 import {
   fetchStudyPlans,
-  planProgress,
   type StudyPlan,
   type StudyPlanStatus,
 } from "../lib/studyPlans";
@@ -84,8 +83,6 @@ export default function StudyPlansPage() {
 
       <section className="plans-board" aria-label="学习计划列表">
         {plans.map((plan, index) => {
-          const progress = planProgress(plan);
-          const completedItems = plan.checklist.filter((item) => item.done).length;
           return (
             <Link
               className="plan-card"
@@ -100,22 +97,9 @@ export default function StudyPlansPage() {
                 <span className="plan-card__status">{statusLabel[plan.status]}</span>
               </header>
               <h2>{plan.title}</h2>
-              <p>{plan.summary || plan.goal || "暂无摘要"}</p>
-              <div className="plan-card__progress">
-                <span>
-                  <i style={{ width: `${progress * 100}%` }} />
-                </span>
-                <b>{Math.round(progress * 100)}%</b>
-              </div>
+              <p>{plan.body.trim().slice(0, 220) || "空白计划，打开后开始编辑。"}</p>
               <footer>
-                <span>
-                  {completedItems}/{plan.checklist.length} 项完成
-                </span>
-                <span>
-                  {plan.deadline
-                    ? `截止 ${plan.deadline}`
-                    : `更新 ${plan.updatedAt.slice(0, 10)}`}
-                </span>
+                <span>更新 {plan.updatedAt.slice(0, 10)}</span>
                 <ArrowIcon />
               </footer>
             </Link>
