@@ -1,0 +1,26 @@
+<div class="section-header"><div class="index">Q1</div><h2>如何设计一个量化 Agent</h2></div>
+          <p>量化 Agent 的核心不是让大模型直接预测涨跌，而是把它放在<strong>研究编排层</strong>：LLM 负责提出问题、解释结果和选择工具，行情、因子、回测、风控与下单必须由确定性程序完成。</p>
+
+          <div class="callout"><strong>最小闭环：</strong>Point-in-time 数据 → 特征与标签 → 策略假设 → 可审阅代码 → 回测（含手续费、滑点、停牌）→ 样本外与滚动验证 → 模拟盘 → 风控闸门 → 实盘执行 → 全链路日志。</div>
+
+          <h3>关键设计原则</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>LLM 只做编排</h3>
+              <p>模型输出结构化 JSON 和工具调用计划，不直接持有账户权限，也不能跳过人工确认。</p>
+            </article>
+            <article class="mini-card">
+              <h3>研究与资金隔离</h3>
+              <p>回测、模拟盘、实盘使用不同环境；实盘必须经过仓位、亏损、回撤和熔断规则。</p>
+            </article>
+            <article class="mini-card">
+              <h3>数据必须可复现</h3>
+              <p>固定数据快照、时间点、代码版本和参数，防止未来函数、幸存者偏差与隐性过拟合。</p>
+            </article>
+            <article class="mini-card">
+              <h3>评估不能只看收益</h3>
+              <p>同时关注 Sharpe、最大回撤、换手率、容量、成本敏感性和样本外稳定性。</p>
+            </article>
+          </div>
+
+          <div class="callout"><strong>落地顺序：</strong>先做只建议不交易的 Research Copilot，再加入纸面交易，验证稳定后才开放受控实盘。</div>
