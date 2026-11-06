@@ -1,0 +1,224 @@
+<div class="section-header"><div class="index">SI11</div><h2>系统设计题：设计一个 LLM 上下文压缩系统（UML/类设计）</h2></div>
+          <p>以 Claude Code 真实源码（src/services/compact/）为参考的一道设计题：面试官让你设计"对话上下文快满时自动压缩"的子系统，要求先画 UML 类图/时序图，再接受逐层追问。</p>
+
+          <div class="callout"><strong>题目：</strong>你的 agent 主循环里消息历史不断增长，模型上下文窗口有限。设计一个上下文压缩（Context Compaction）子系统：监控 token 用量、自动触发压缩、压缩后还能恢复关键文件上下文。画出类图和主流程。</div>
+
+          <h3>一、先拆需求（答题第一步永远是定边界）</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>监控：</strong>每轮统计 token 用量，区分"警告/错误/必须压缩"三档水位。</div>
+            <div class="flow-step" data-step="2"><strong>压缩：</strong>让模型把旧对话总结成摘要，用摘要 + 保留尾部消息替换整段历史。</div>
+            <div class="flow-step" data-step="3"><strong>恢复：</strong>压缩后把关键上下文（最近读过的文件、计划、skill）按预算重新注入。</div>
+            <div class="flow-step" data-step="4"><strong>兜底：</strong>压缩失败要熔断重试，用户可手动 /compact 也可禁用自动压缩。</div>
+          </div>
+
+          <h3>二、UML 类图</h3>
+          <svg viewBox="0 0 780 540" xmlns="http://www.w3.org/2000/svg" style="max-width:780px;width:100%;background:#0e1220;border-radius:12px;font-family:'IBM Plex Mono',monospace">
+            <defs>
+              <marker id="dep" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#8ab0ff" stroke-width="1.2"/></marker>
+              <marker id="assoc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="none" stroke="#7dd3a8" stroke-width="1.2"/></marker>
+            </defs>
+            <style>
+              .cls { fill:#141a2e; stroke:#4d6bfe; stroke-width:1.2; }
+              .sep { stroke:#4d6bfe; stroke-width:0.8; }
+              .st  { fill:#8ab0ff; font-size:11px; font-style:italic; }
+              .nm  { fill:#e8ecff; font-size:12px; font-weight:700; }
+              .mm  { fill:#aab4d4; font-size:10.5px; }
+              .rel { stroke:#8ab0ff; stroke-width:1.1; stroke-dasharray:5 4; fill:none; }
+              .aso { stroke:#7dd3a8; stroke-width:1.2; fill:none; }
+              .lb  { fill:#7dd3a8; font-size:10px; }
+              .mult{ fill:#f0b66e; font-size:10px; }
+            </style>
+
+            <!-- CompactionPolicy -->
+            <g>
+              <rect class="cls" x="20" y="20" width="250" height="118" rx="6"/>
+              <text class="st" x="145" y="38" text-anchor="middle">«strategy»</text>
+              <text class="nm" x="145" y="55" text-anchor="middle">CompactionPolicy</text>
+              <line class="sep" x1="20" y1="62" x2="270" y2="62"/>
+              <text class="mm" x="28" y="78">- consecutiveFailures: int</text>
+              <line class="sep" x1="20" y1="86" x2="270" y2="86"/>
+              <text class="mm" x="28" y="102">+ threshold(model): int</text>
+              <text class="mm" x="28" y="118">+ shouldCompact(usage): bool</text>
+              <text class="mm" x="28" y="134">+ warningState(usage): State</text>
+              <text class="mm" x="145" y="152" text-anchor="middle" style="font-size:9px;fill:#5a668c">autoCompact.ts</text>
+            </g>
+
+            <!-- Summarizer -->
+            <g>
+              <rect class="cls" x="305" y="20" width="215" height="88" rx="6"/>
+              <text class="st" x="412" y="38" text-anchor="middle">«interface»</text>
+              <text class="nm" x="412" y="55" text-anchor="middle">Summarizer</text>
+              <line class="sep" x1="305" y1="62" x2="520" y2="62"/>
+              <text class="mm" x="313" y="80">+ summarize(history): string</text>
+              <text class="mm" x="412" y="100" text-anchor="middle" style="font-size:9px;fill:#5a668c">runForkedAgent 子 agent</text>
+            </g>
+
+            <!-- CompactHooks -->
+            <g>
+              <rect class="cls" x="560" y="20" width="200" height="80" rx="6"/>
+              <text class="st" x="660" y="38" text-anchor="middle">«observer»</text>
+              <text class="nm" x="660" y="55" text-anchor="middle">CompactHooks</text>
+              <line class="sep" x1="560" y1="62" x2="760" y2="62"/>
+              <text class="mm" x="568" y="80">+ preCompact() / postCompact()</text>
+            </g>
+
+            <!-- ConversationCompactor -->
+            <g>
+              <rect class="cls" x="255" y="185" width="270" height="132" rx="6"/>
+              <text class="nm" x="390" y="208" text-anchor="middle">ConversationCompactor</text>
+              <line class="sep" x1="255" y1="216" x2="525" y2="216"/>
+              <text class="mm" x="263" y="234">+ compact(messages): Messages</text>
+              <text class="mm" x="263" y="250">+ partialCompact(range): Messages</text>
+              <text class="mm" x="263" y="266">- stripImages()</text>
+              <text class="mm" x="263" y="282">- buildPostCompactMessages()</text>
+              <text class="mm" x="263" y="298">- createCompactCanUseTool()</text>
+              <text class="mm" x="390" y="310" text-anchor="middle" style="font-size:9px;fill:#5a668c">compact.ts（1700 行核心引擎）</text>
+            </g>
+
+            <!-- MicroCompactor -->
+            <g>
+              <rect class="cls" x="20" y="200" width="215" height="105" rx="6"/>
+              <text class="nm" x="127" y="222" text-anchor="middle">MicroCompactor</text>
+              <line class="sep" x1="20" y1="230" x2="235" y2="230"/>
+              <text class="mm" x="28" y="248">+ clearOldToolResults()</text>
+              <text class="mm" x="28" y="264">COMPACTABLE_TOOLS: Set&lt;9&gt;</text>
+              <text class="mm" x="28" y="280">+ evaluateTimeBasedTrigger()</text>
+              <text class="mm" x="127" y="298" text-anchor="middle" style="font-size:9px;fill:#5a668c">microCompact.ts</text>
+            </g>
+
+            <!-- CompactBoundary -->
+            <g>
+              <rect class="cls" x="140" y="395" width="240" height="95" rx="6"/>
+              <text class="st" x="260" y="413" text-anchor="middle">«entity»</text>
+              <text class="nm" x="260" y="430" text-anchor="middle">CompactBoundary</text>
+              <line class="sep" x1="140" y1="438" x2="380" y2="438"/>
+              <text class="mm" x="148" y="456">+ summary: string</text>
+              <text class="mm" x="148" y="472">+ preservedSegment: MessageRange</text>
+            </g>
+
+            <!-- PostCompactRestorer -->
+            <g>
+              <rect class="cls" x="440" y="395" width="250" height="105" rx="6"/>
+              <text class="nm" x="565" y="415" text-anchor="middle">PostCompactRestorer</text>
+              <line class="sep" x1="440" y1="423" x2="690" y2="423"/>
+              <text class="mm" x="448" y="441">+ restoreFiles(max 5, ≤50k tok)</text>
+              <text class="mm" x="448" y="457">+ restorePlan()</text>
+              <text class="mm" x="448" y="473">+ restoreSkills(≤25k tok)</text>
+              <text class="mm" x="565" y="492" text-anchor="middle" style="font-size:9px;fill:#5a668c">createPostCompactFileAttachments</text>
+            </g>
+
+            <!-- Relations -->
+            <path class="rel" marker-end="url(#dep)" d="M255,200 C200,160 170,160 148,140"/>
+            <text class="lb" x="168" y="165">«use» 水位判断</text>
+            <path class="aso" marker-end="url(#assoc)" d="M390,185 L410,110"/>
+            <text class="lb" x="418" y="150">注入</text>
+            <text class="mult" x="394" y="178">1</text><text class="mult" x="404" y="122">1</text>
+            <path class="aso" marker-end="url(#assoc)" d="M330,317 L285,395"/>
+            <text class="lb" x="288" y="360">creates</text>
+            <path class="aso" marker-end="url(#assoc)" d="M470,317 L540,395"/>
+            <text class="lb" x="512" y="360">invokes</text>
+            <path class="rel" marker-end="url(#dep)" d="M525,230 C610,220 660,180 662,102"/>
+            <text class="lb" x="640" y="170">notify</text>
+            <path class="rel" marker-end="url(#dep)" d="M235,255 L255,255"/>
+            <text class="lb" x="210" y="245">轻量路径</text>
+          </svg>
+          <p><small>虚线 = 依赖 «use»/notify，实线箭头 = 关联（注入/创建/调用）。来源：src/services/compact/{autoCompact, compact, microCompact}.ts。</small></p>
+
+          <h3>三、UML 时序图（自动压缩一轮）</h3>
+          <svg viewBox="0 0 840 640" xmlns="http://www.w3.org/2000/svg" style="max-width:840px;width:100%;background:#0e1220;border-radius:12px;font-family:'IBM Plex Mono',monospace">
+            <defs>
+              <marker id="solid" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8ab0ff"/></marker>
+              <marker id="ret" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#7dd3a8" stroke-width="1.2"/></marker>
+            </defs>
+            <style>
+              .ph  { fill:#141a2e; stroke:#4d6bfe; }
+              .pn  { fill:#e8ecff; font-size:11.5px; font-weight:700; }
+              .ll  { stroke:#3a4470; stroke-dasharray:4 4; }
+              .act { fill:#4d6bfe; }
+              .msg { stroke:#8ab0ff; stroke-width:1.4; }
+              .rsp { stroke:#7dd3a8; stroke-width:1.2; stroke-dasharray:5 4; }
+              .mt  { fill:#c7d0f2; font-size:11px; }
+              .gd  { fill:#f0b66e; font-size:10.5px; }
+              .nt  { fill:#0d1526; stroke:#f0b66e; }
+              .ntx { fill:#f0cf9e; font-size:10.5px; }
+            </style>
+
+            <!-- lifelines -->
+            <g>
+              <rect class="ph" x="20"  y="20" width="120" height="36" rx="4"/><text class="pn" x="80"  y="43" text-anchor="middle">AgentLoop</text>
+              <rect class="ph" x="170" y="20" width="140" height="36" rx="4"/><text class="pn" x="240" y="43" text-anchor="middle">CompactionPolicy</text>
+              <rect class="ph" x="340" y="20" width="140" height="36" rx="4"/><text class="pn" x="410" y="43" text-anchor="middle">Compactor</text>
+              <rect class="ph" x="510" y="20" width="140" height="36" rx="4"/><text class="pn" x="580" y="43" text-anchor="middle">Summarizer</text>
+              <rect class="ph" x="680" y="20" width="140" height="36" rx="4"/><text class="pn" x="750" y="43" text-anchor="middle">Restorer</text>
+            </g>
+            <line class="ll" x1="80" y1="56" x2="80" y2="560"/><line class="ll" x1="240" y1="56" x2="240" y2="560"/>
+            <line class="ll" x1="410" y1="56" x2="410" y2="560"/><line class="ll" x1="580" y1="56" x2="580" y2="560"/><line class="ll" x1="750" y1="56" x2="750" y2="560"/>
+
+            <!-- activations -->
+            <rect class="act" x="76" y="95" width="8" height="430" rx="2"/>
+            <rect class="act" x="236" y="110" width="8" height="60" rx="2"/>
+            <rect class="act" x="406" y="215" width="8" height="250" rx="2"/>
+            <rect class="act" x="576" y="265" width="8" height="60" rx="2"/>
+            <rect class="act" x="746" y="385" width="8" height="55" rx="2"/>
+
+            <!-- messages -->
+            <line class="msg" x1="80" y1="110" x2="234" y2="110" marker-end="url(#solid)"/>
+            <text class="mt" x="90" y="104">1: reportUsage(tokens)</text>
+
+            <line class="msg" x1="80" y1="150" x2="234" y2="150" marker-end="url(#solid)"/>
+            <text class="mt" x="90" y="144">2: warningState(usage)</text>
+            <line class="rsp" x1="236" y1="168" x2="86" y2="168" marker-end="url(#ret)"/>
+            <text class="mt" x="95" y="162">3: {percentLeft, warning, error, blocking}</text>
+
+            <line class="msg" x1="80" y1="228" x2="404" y2="228" marker-end="url(#solid)"/>
+            <text class="mt" x="90" y="210">4: compact(messages)</text>
+            <text class="gd" x="90" y="224">[usage ≥ window − 20k摘要 − 13k buffer]</text>
+
+            <line class="msg" x1="414" y1="280" x2="574" y2="280" marker-end="url(#solid)"/>
+            <text class="mt" x="424" y="274">5: summarize(history) «forked»</text>
+            <line class="rsp" x1="576" y1="315" x2="416" y2="315" marker-end="url(#ret)"/>
+            <text class="mt" x="428" y="309">6: summary text</text>
+
+            <line class="msg" x1="414" y1="355" x2="405" y2="355" marker-end="url(#solid)"/>
+            <path class="msg" d="M414,355 h35 v22 h-35" marker-end="url(#solid)" fill="none"/>
+            <text class="mt" x="455" y="370">7: insert(CompactBoundary + 保留段)</text>
+
+            <line class="msg" x1="414" y1="400" x2="744" y2="400" marker-end="url(#solid)"/>
+            <text class="mt" x="424" y="394">8: restore(files ≤5, plan, skills)</text>
+            <line class="rsp" x1="746" y1="432" x2="416" y2="432" marker-end="url(#ret)"/>
+            <text class="mt" x="430" y="426">9: attachments（按预算重注入）</text>
+
+            <line class="rsp" x1="410" y1="480" x2="86" y2="480" marker-end="url(#ret)"/>
+            <text class="mt" x="120" y="474">10: new message history（摘要+边界+尾部）</text>
+
+            <!-- failure note -->
+            <rect class="nt" x="150" y="510" width="540" height="42" rx="6"/>
+            <text class="ntx" x="165" y="528">note over Compactor: 连续失败 ≥3 次熔断停试</text>
+            <text class="ntx" x="165" y="544">（MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES，防止烧 API）</text>
+            <line x1="410" y1="470" x2="410" y2="510" stroke="#f0b66e" stroke-dasharray="3 3"/>
+          </svg>
+          <p><small>实线实箭头 = 同步调用，虚线开箭头 = 返回；激活条表示参与者处于执行中。守卫条件用方括号标注在消息上。</small></p>
+
+          <h3>四、追问点（面试官按这个套路深挖）</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>"为什么要两档压缩？"</h3>
+              <p>microCompact 只在白名单工具（Read/Bash/Grep/Glob/WebFetch/WebSearch/Edit/Write）的旧结果上做定点清除，替换成占位符——不动消息结构、不花模型调用，prompt cache 友好；全量 compact 才调模型生成摘要。<strong>轻量问题用轻量手段，是分层设计的体现。</strong></p>
+            </article>
+            <article class="mini-card">
+              <h3>"摘要生成为什么用子 agent？"</h3>
+              <p>runForkedAgent 把压缩当一次独立 agent 调用跑：独立上下文、独立权限（createCompactCanUseTool 控制压缩期间能用哪些工具）、失败不污染主循环。组合 + 依赖注入。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"阈值怎么定的？"</h3>
+              <p>三个 buffer 各管一件事：20k 给摘要输出留空间（p99.99 实测 17,387 tokens）、13k 触发缓冲、3k 手动压缩硬上限。全部可用环境变量覆盖做测试——可配置性。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"压缩丢了重要信息怎么办？"</h3>
+              <p>两道保险：① CompactBoundary 记录保留段起点，边界后原文不丢；② PostCompactRestorer 按文件/plan/skill 各自的 token 预算把关键上下文重新注入——压缩是"有损摘要 + 无损关键点重放"的组合。</p>
+            </article>
+          </div>
+
+          <h3>五、设计原则对应（最后升华一句）</h3>
+          <p>CompactionPolicy 可换 = <strong>策略模式 + 开闭</strong>；Summarizer 注入 = <strong>依赖倒置</strong>；pre/post compact hooks = <strong>观察者</strong>；micro vs full 两级压缩 = <strong>单一职责 + 分层策略</strong>；熔断器状态 = <strong>状态机</strong>。一句收尾："压缩系统本质是缓存淘汰——消息是不可重算的、工具结果是可重取的，所以前者做摘要、后者直接清。"</p>
+        </div>
