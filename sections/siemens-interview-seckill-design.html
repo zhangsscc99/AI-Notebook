@@ -1,0 +1,172 @@
+<div class="section-header"><div class="index">SI13</div><h2>系统设计题：设计一个秒杀系统（类图 + 时序图参考答案）</h2></div>
+          <p>笔试高频题："设计一个秒杀/抢购系统，先画核心类设计，再画下单流程。"一道题同时考<strong>类图（结构设计）、时序图（流程）、并发与流量控制</strong>。下面是一份能拿高分的参考答案——重点不是背图，是每个设计选择都能说出为什么。</p>
+
+          <div class="callout"><strong>答题策略：</strong>先画主干再补细节，主动跟面试官说"我先画核心结构，细节边讲边补"——粗粒度不是缺陷，是给追问留接口。</div>
+
+          <h3>Q1：设计一个秒杀系统，画出核心类设计和下单时序图</h3>
+
+          <h3>第一部分：类图</h3>
+          <p>分层思路：<strong>Controller → 编排服务 → 可替换的基础设施（库存/消息/落库）</strong>。三个关键决策先想好再动笔：</p>
+          <div class="grid-2">
+            <article class="mini-card"><h3>StockService 做成接口</h3><p>Redis 预减、DB 乐观锁、Lua 原子扣三种实现可替换 → 依赖倒置 + 开闭原则，是给"换实现"追问埋的钩子。</p></article>
+            <article class="mini-card"><h3>MiaoshaService 做编排</h3><p>并发预减、发消息这些秒杀特有逻辑集中在这，不污染 OrderService → 单一职责。</p></article>
+            <article class="mini-card"><h3>MQSender ◆ Message</h3><p>消息对象生命周期依附发送动作 → 组合（实心菱形）。对比：购物车和商品是聚合，商品独立存在。</p></article>
+            <article class="mini-card"><h3>Controller - -> Service</h3><p>Spring 注入本质是关联，画依赖（虚线箭头）也合理——被问到能讲"注入算长期持有，我画关联/依赖都说得通"即可。</p></article>
+          </div>
+
+          <svg viewBox="0 0 820 470" xmlns="http://www.w3.org/2000/svg" style="max-width:820px;width:100%;background:#0e1220;border-radius:12px;font-family:'IBM Plex Mono',monospace">
+            <defs>
+              <marker id="sk-g" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="10" markerHeight="10" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#0e1220" stroke="#8ab0ff" stroke-width="1.4"/></marker>
+              <marker id="sk-fa" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="9" markerHeight="9" orient="auto"><path d="M1,6 L6,1 L11,6 L6,11 z" fill="#7dd3a8"/></marker>
+              <marker id="sk-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10" fill="none" stroke="#7dd3a8" stroke-width="1.3"/></marker>
+            </defs>
+            <style>
+              .skb{fill:#141a2e;stroke:#4d6bfe;stroke-width:1.2;}
+              .skn{fill:#e8ecff;font-size:12px;font-weight:700;}
+              .skm{fill:#9aa4c8;font-size:10.5px;}
+              .skl{stroke:#8ab0ff;stroke-width:1.3;fill:none;}
+              .skd{stroke:#8ab0ff;stroke-width:1.3;stroke-dasharray:6 4;fill:none;}
+              .ska{stroke:#7dd3a8;stroke-width:1.3;fill:none;}
+            </style>
+            <!-- Controller -->
+            <rect class="skb" x="30" y="30" width="170" height="60" rx="5"/>
+            <text class="skn" x="115" y="52" text-anchor="middle">MiaoshaController</text>
+            <line class="skl" x1="30" y1="62" x2="200" y2="62"/>
+            <text class="skm" x="38" y="78">+ doMiaosha()</text>
+            <!-- MiaoshaService -->
+            <rect class="skb" x="30" y="170" width="170" height="100" rx="5"/>
+            <text class="skn" x="115" y="192" text-anchor="middle">MiaoshaService</text>
+            <text class="skm" x="115" y="207" text-anchor="middle">（编排者）</text>
+            <line class="skl" x1="30" y1="214" x2="200" y2="214"/>
+            <text class="skm" x="38" y="230">+ miaosha()</text>
+            <text class="skm" x="38" y="248">+ verifyPath()</text>
+            <!-- StockService interface -->
+            <rect class="skb" x="300" y="30" width="180" height="80" rx="5"/>
+            <text class="skn" x="390" y="52" text-anchor="middle">«interface»</text>
+            <text class="skn" x="390" y="68" text-anchor="middle">StockService</text>
+            <line class="skl" x1="300" y1="76" x2="480" y2="76"/>
+            <text class="skm" x="308" y="94">+ preDeduct() / incrBack()</text>
+            <!-- RedisStockService -->
+            <rect class="skb" x="560" y="30" width="190" height="80" rx="5"/>
+            <text class="skn" x="655" y="52" text-anchor="middle">RedisStockService</text>
+            <line class="skl" x1="560" y1="60" x2="750" y2="60"/>
+            <text class="skm" x="568" y="78">- jedisPool / luaScript</text>
+            <text class="skm" x="568" y="96">+ preDeduct() 原子扣</text>
+            <!-- MQSender + Message -->
+            <rect class="skb" x="300" y="180" width="170" height="70" rx="5"/>
+            <text class="skn" x="385" y="202" text-anchor="middle">MQSender</text>
+            <line class="skl" x1="300" y1="210" x2="470" y2="210"/>
+            <text class="skm" x="308" y="228">+ send(msg)</text>
+            <rect class="skb" x="560" y="180" width="170" height="70" rx="5"/>
+            <text class="skn" x="645" y="202" text-anchor="middle">MiaoshaMessage</text>
+            <line class="skl" x1="560" y1="210" x2="730" y2="210"/>
+            <text class="skm" x="568" y="228">- userId / goodsId</text>
+            <!-- OrderService -->
+            <rect class="skb" x="300" y="330" width="170" height="70" rx="5"/>
+            <text class="skn" x="385" y="352" text-anchor="middle">OrderService</text>
+            <line class="skl" x1="300" y1="360" x2="470" y2="360"/>
+            <text class="skm" x="308" y="378">+ createOrder()</text>
+            <!-- edges -->
+            <line class="skd" x1="115" y1="90" x2="115" y2="170" marker-end="url(#sk-ar)" style="stroke-dasharray:6 4"/>
+            <text class="skm" x="122" y="135">依赖（调用）</text>
+            <line class="ska" x1="200" y1="200" x2="300" y2="110" marker-end="url(#sk-ar)"/>
+            <text class="skm" x="215" y="150">关联</text>
+            <line class="skd" x1="560" y1="70" x2="480" y2="70" marker-end="url(#sk-g)"/>
+            <text class="skm" x="505" y="62">实现</text>
+            <line class="ska" x1="200" y1="230" x2="300" y2="218" marker-end="url(#sk-ar)"/>
+            <line class="ska" x1="470" y1="215" x2="560" y2="215" marker-end="url(#sk-ar)" marker-start="url(#sk-fa)"/>
+            <text class="skm" x="478" y="207">组合 ◆</text>
+            <line class="ska" x1="200" y1="250" x2="300" y2="355" marker-end="url(#sk-ar)"/>
+            <text class="skm" x="215" y="310">关联</text>
+            <!-- legend -->
+            <text class="skm" x="30" y="450">绿实线箭头=关联 ｜ 蓝虚线箭头=依赖 ｜ 蓝虚线三角=实现接口 ｜ 实心菱形=组合（整体端）</text>
+          </svg>
+
+          <h3>第二部分：时序图（下单流程）</h3>
+          <svg viewBox="0 0 860 520" xmlns="http://www.w3.org/2000/svg" style="max-width:860px;width:100%;background:#0e1220;border-radius:12px;font-family:'IBM Plex Mono',monospace">
+            <defs>
+              <marker id="sq-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8ab0ff"/></marker>
+              <marker id="sq-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10" fill="none" stroke="#7dd3a8" stroke-width="1.3"/></marker>
+            </defs>
+            <style>
+              .sqn{fill:#e8ecff;font-size:11.5px;font-weight:700;}
+              .sqm{fill:#9aa4c8;font-size:10.5px;}
+              .sql{stroke:#4d6bfe;stroke-width:1;stroke-dasharray:4 4;}
+              .sqc{stroke:#8ab0ff;stroke-width:1.4;}
+              .sqr{stroke:#7dd3a8;stroke-width:1.4;stroke-dasharray:6 4;}
+              .sqb{fill:#4d6bfe;}
+              .sqw{fill:#f0b66e;font-size:10.5px;font-weight:700;}
+            </style>
+            <!-- lifelines -->
+            <text class="sqn" x="60" y="32" text-anchor="middle">User</text>
+            <text class="sqn" x="215" y="32" text-anchor="middle">MiaoshaService</text>
+            <text class="sqn" x="380" y="32" text-anchor="middle">RedisStock</text>
+            <text class="sqn" x="540" y="32" text-anchor="middle">MQ</text>
+            <text class="sqn" x="680" y="32" text-anchor="middle">Consumer</text>
+            <text class="sqn" x="800" y="32" text-anchor="middle">DB</text>
+            <line class="sql" x1="60" y1="44" x2="60" y2="500"/>
+            <line class="sql" x1="215" y1="44" x2="215" y2="500"/>
+            <line class="sql" x1="380" y1="44" x2="380" y2="500"/>
+            <line class="sql" x1="540" y1="44" x2="540" y2="500"/>
+            <line class="sql" x1="680" y1="44" x2="680" y2="500"/>
+            <line class="sql" x1="800" y1="44" x2="800" y2="500"/>
+            <rect class="sqb" x="210" y="80" width="10" height="300"/>
+            <rect class="sqb" x="375" y="105" width="10" height="50"/>
+            <rect class="sqb" x="675" y="315" width="10" height="100"/>
+            <!-- 1 request -->
+            <line class="sqc" x1="60" y1="80" x2="212" y2="80" marker-end="url(#sq-s)"/>
+            <text class="sqm" x="68" y="74">1: miaosha(goodsId)</text>
+            <!-- 2 preDeduct -->
+            <line class="sqc" x1="220" y1="115" x2="377" y2="115" marker-end="url(#sq-s)"/>
+            <text class="sqm" x="228" y="109">2: preDeduct() Lua 原子减</text>
+            <line class="sqr" x1="377" y1="150" x2="222" y2="150" marker-end="url(#sq-r)"/>
+            <text class="sqm" x="240" y="144">3: stock = 99</text>
+            <!-- alt -->
+            <rect x="40" y="168" width="620" height="120" fill="none" stroke="#f0b66e" stroke-width="1" rx="4"/>
+            <text class="sqw" x="50" y="184">alt</text>
+            <text class="sqm" x="90" y="184">[库存 &lt; 0]</text>
+            <line class="sqr" x1="215" y1="215" x2="62" y2="215" marker-end="url(#sq-r)"/>
+            <text class="sqm" x="70" y="209">4a: 直接返回"已售罄"</text>
+            <line x1="40" y1="235" x2="660" y2="235" stroke="#f0b66e" stroke-dasharray="8 4"/>
+            <text class="sqm" x="90" y="253">[库存充足]</text>
+            <!-- send mq -->
+            <line class="sqc" x1="220" y1="272" x2="537" y2="272" marker-end="url(#sq-s)"/>
+            <text class="sqm" x="228" y="266">4b: send(MiaoshaMessage)</text>
+            <line class="sqr" x1="215" y1="305" x2="62" y2="305" marker-end="url(#sq-r)"/>
+            <text class="sqm" x="68" y="299">5: 立即返回"排队中"</text>
+            <!-- consume -->
+            <line class="sqc" x1="540" y1="335" x2="677" y2="335" marker-end="url(#sq-s)"/>
+            <text class="sqm" x="548" y="329">6: consume(msg)</text>
+            <line class="sqc" x1="685" y1="370" x2="797" y2="370" marker-end="url(#sq-s)"/>
+            <text class="sqm" x="693" y="364">7: createOrder + 扣库存（乐观锁 where stock&gt;0）</text>
+            <!-- failure rollback -->
+            <rect x="350" y="395" width="470" height="80" fill="none" stroke="#f0b66e" stroke-width="1" rx="4"/>
+            <text class="sqw" x="360" y="411">alt</text>
+            <text class="sqm" x="400" y="411">[DB 扣减失败 / 超时]</text>
+            <line class="sqc" x1="677" y1="440" x2="382" y2="440" marker-end="url(#sq-s)"/>
+            <text class="sqm" x="430" y="434">8: incrBack() 回补 Redis 库存</text>
+            <text class="sqm" x="400" y="466">（否则超卖：Redis 已减但订单没建成）</text>
+          </svg>
+
+          <h3>第三部分：每一步的"为什么"（追问预案）</h3>
+          <table>
+            <thead><tr><th>步骤</th><th>设计动机</th><th>面试官追问</th></tr></thead>
+            <tbody>
+              <tr><td>Redis 预减</td><td>挡掉 99% 流量，DB 只承担真实库存量级的写入</td><td>"并发扣成负数怎么办？" → Lua 脚本保证原子性，check+decr 一步完成</td></tr>
+              <tr><td>MQ 异步下单</td><td>削峰：瞬时 10w QPS 摊平成匀速落库；用户秒级拿到响应</td><td>"用户不知道结果？" → 前端轮询订单状态 / 服务端推送</td></tr>
+              <tr><td>立即返回"排队中"</td><td>异步体验权衡，秒杀场景用户可接受</td><td>"能不能同步返回结果？" → 可以但失去削峰意义</td></tr>
+              <tr><td>incrBack 回滚</td><td>消费失败要回补 Redis 库存，否则库存被"幽灵扣减"</td><td>"消息丢了怎么办？" → 持久化 + 手动 ack + 死信队列兜底</td></tr>
+              <tr><td>DB 乐观锁兜底</td><td>update where stock&gt;0 双保险，Redis 是缓存不是真相</td><td>"Redis 挂了？" → 降级直查 DB + 限流，或本地库存标记</td></tr>
+            </tbody>
+          </table>
+
+          <h3>第四部分：现场话术</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>动笔前定调</strong>："秒杀的核心是并发和削峰，我把扣库存抽象成接口，MQ 做异步排队，落库单独一个服务。"</div>
+            <div class="flow-step" data-step="2"><strong>画完递话头</strong>："我留了几个扩展点：StockService 可换实现，流程上画了失败回滚，实际还要考虑消息可靠性。"</div>
+            <div class="flow-step" data-step="3"><strong>被问优化</strong>：接口限流（令牌桶）、库存本地标记（内存挡 Redis）、队列分片、消费端批量落库、秒杀链接动态化防刷。</div>
+            <div class="flow-step" data-step="4"><strong>被挑细节不慌</strong>："为什么是组合不是聚合？" → "消息的生命周期依附发送方，订单和商品那种独立存在的才是聚合。"</div>
+          </div>
+
+          <div class="callout"><strong>练习路径：</strong>① 照着抄一遍理解每个箭头 → ② 合上书默画 → ③ 自己加细节（token 校验、GoodsService）→ ④ 画完截图找人挑刺。画得漂亮不重要，每条线能讲出动机才重要。</div>
+        </div>
