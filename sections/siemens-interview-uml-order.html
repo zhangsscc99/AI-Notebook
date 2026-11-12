@@ -1,0 +1,19 @@
+<div class="section-header"><div class="index">SI19</div><h2>UML 类图：订单 · 商品 · 订单项</h2></div>
+          <p>这是"多对多拆中间实体"的第二个经典场景，比选课多一层：中间实体还承担<strong>价格快照</strong>的职责。</p>
+
+          <div class="callout"><strong>一句话答案：</strong>订单与商品是多对多，拆成 <code>Order 1—* OrderItem *—1 Product</code>；订单项必须保留下单时的价格和商品名，否则历史订单金额会跟着调价变。</div>
+
+          <h3>Q：订单、商品、订单项三者怎么画？为什么不能订单直接连商品？</h3>
+          <p>关键在一句话：<strong>订单项是账目行</strong>，一行只记一个商品、一个数量、一个单价。</p>
+
+          <h3>三个关键设计点</h3>
+          <ul>
+            <li><strong>为什么不能直接 Order—Product：</strong>"买了几个、单价多少、小计多少"无处安放；一个订单买三种商品，就得有三行，这正是订单项存在的理由。</li>
+            <li><strong>为什么订单项有 price 和 productName：</strong>快照。商品改价改名后，历史订单的金额和展示都不能变。</li>
+            <li><strong>为什么是组合：</strong>订单删除，订单项没有独立意义；但它指向商品的关系是<strong>关联</strong>——商品独立存在，不随订单消失。</li>
+          </ul>
+
+          <div class="callout"><strong>追问：</strong>"订单总价要不要存？"——要，冗余存储避免每次重算；但要标注它是派生字段（订单项小计之和），并说明对账时以哪个为准。</div>
+
+          <h3>完整类图</h3>
+          <img src="/images/uml/order-product-diagram.png" alt="订单、订单项、商品类图：组合关系与价格快照" style="display:block;width:100%;max-width:1000px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>

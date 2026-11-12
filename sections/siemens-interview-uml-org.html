@@ -1,0 +1,19 @@
+<div class="section-header"><div class="index">SI20</div><h2>UML 类图：公司 · 部门 · 员工</h2></div>
+          <p>一张图同时讲清四种关系，还带两个自关联，是练"关系辨析"最好的题。</p>
+
+          <div class="callout"><strong>一句话答案：</strong>公司◆部门是组合（同生共死），部门◇员工是聚合（人能转岗），部门和员工各有自关联（层级与汇报线），只有员工类型才是继承。</div>
+
+          <h3>Q：画出公司、部门、员工的类图，并说明为什么部门→员工是聚合</h3>
+          <p>先判断三件事：谁是整体、整体没了部分还活不活、层级关系是实例之间还是类型之间。</p>
+
+          <h3>三个关键设计点</h3>
+          <ul>
+            <li><strong>组合 vs 聚合看生命周期：</strong>公司注销部门没了 → 组合；部门撤销员工转岗、人事档案还在 → 聚合。判断标准只有一条：整体没了，部分还活不活。</li>
+            <li><strong>子部门不是继承：</strong>部门树的层级是<strong>实例之间</strong>的连线（自关联），不是类型派生；画成 <code>SubDepartment extends Department</code> 会无限递归，也说不清同一个部门在不同场景下是父还是子。</li>
+            <li><strong>leader 也不是继承：</strong>经理仍然是员工，只是角色不同；用自关联 + <code>title</code> 表达，别造新类型。</li>
+          </ul>
+
+          <div class="callout"><strong>追问：</strong>"一个人属于多个部门怎么改？"——变成多对多，中间加关联类 <code>Employment</code>，记录主部门、投入占比、生效时间；这也顺便解决了任职历史留痕。</div>
+
+          <h3>完整类图</h3>
+          <img src="/images/uml/org-diagram-v2.png" alt="公司、部门、员工类图：组合、聚合、自关联与泛化" style="display:block;width:100%;max-width:1000px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>

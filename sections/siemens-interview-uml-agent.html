@@ -1,0 +1,19 @@
+<div class="section-header"><div class="index">SI21</div><h2>UML 类图：设计一个 Coding Agent</h2></div>
+          <p>这题考的不是"聊天机器人"，而是<strong>工具调用协议 + 循环 + 权限治理</strong>。图里的类能直接和 Claude Code 源码对上：<code>Tool.ts</code>、<code>QueryEngine.ts</code>、<code>src/tools/</code>。</p>
+
+          <div class="callout"><strong>一句话答案：</strong>引擎驱动"模型 → 工具 → 结果回灌"的循环；工具是接口并自带元数据（只读 / 破坏性 / 可并发），权限据此决定放行还是询问。</div>
+
+          <h3>Q：设计一个能读写代码、执行命令的 Coding Agent，画出核心类图</h3>
+          <p>先问清边界（CLI 还是服务、工具只读还是可写、单 agent 还是多 agent），再按"一次请求的生命周期"抽类，最后补扩展点。</p>
+
+          <h3>三个关键设计点</h3>
+          <ul>
+            <li><strong>工具自带元数据：</strong><code>isReadOnly()</code> / <code>isDestructive()</code> / <code>isConcurrencySafe()</code>，引擎读元数据决定策略，而不是硬编码工具名——新增工具时权限逻辑零改动。</li>
+            <li><strong>权限随调用下传：</strong><code>canUseTool</code> 是参数不是全局单例，多会话、子 agent 并行时才不会串权限。</li>
+            <li><strong>上下文压缩是一等公民：</strong>没有 <code>ContextManager</code>，agent 跑到十几轮就爆 context；<code>shouldCompact()</code> / <code>compact()</code> 是长任务能跑下去的前提。</li>
+          </ul>
+
+          <div class="callout"><strong>追问：</strong>"工具误删文件怎么办？"——三道闸：工具声明 <code>isDestructive</code> → 权限策略要求人工确认 → 命令沙箱/白名单兜底。回答里带上"三道闸"，比只说"加个确认"高一个档次。</div>
+
+          <h3>完整类图</h3>
+          <img src="/images/uml/coding-agent-diagram.png" alt="Coding Agent 类图：QueryEngine、Tool、ToolRegistry、PermissionPolicy、ContextManager" style="display:block;width:100%;max-width:1000px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>

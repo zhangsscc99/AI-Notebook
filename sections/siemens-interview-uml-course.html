@@ -1,0 +1,19 @@
+<div class="section-header"><div class="index">SI17</div><h2>UML 类图：选课系统（学生 · 教师 · 课程）</h2></div>
+          <p>这题几乎每场笔试都有人被问。它表面是三个类，实际考的是<strong>把多对多拆成中间实体</strong>，以及"成绩放哪"这个经典追问。</p>
+
+          <div class="callout"><strong>一句话答案：</strong>学生与课程是多对多，中间必须有 <code>Enrollment</code>（选课记录）；成绩、选课时间属于这条记录，既不属于学生也不属于课程。</div>
+
+          <h3>Q：画出学生、教师、课程的类图，并说明多对多关系怎么落地</h3>
+          <p>完整版分两层：<code>Person</code> 抽象出共有属性，<code>Student</code> / <code>Teacher</code> 泛化继承；<code>Enrollment</code> 作为选课记录，把"谁选了哪门课"落成可以携带属性的实体。</p>
+
+          <h3>三个关键设计点</h3>
+          <ul>
+            <li><strong>为什么不能直接 Student *—* Course：</strong>成绩、选课时间这些属性既不属于学生也不属于课程，只能挂在"关系"上；多对多必须先拆成两个一对多。</li>
+            <li><strong>为什么 Person 标 {abstract}：</strong>现实中没有"纯人"这种实例，只有学生或教师；抽象类保证它不会被直接 new 出来。</li>
+            <li><strong>为什么 status 用枚举：</strong>取值有限且固定（已选 / 退课 / 完成），写成 <code>String</code> 会丢掉约束，评审时对方不知道能填什么。</li>
+          </ul>
+
+          <div class="callout"><strong>追问：</strong>"如果允许重修，同一门课能选多次，<code>Enrollment</code> 靠什么区分？"——靠（学生、课程、学期）三元组，不能只用前两个，否则第二次选课会被唯一约束挡住。</div>
+
+          <h3>完整类图</h3>
+          <img src="/images/uml/course-selection-entity.png" alt="选课系统类图：Person / Student / Teacher / Course / Enrollment / CourseStatus" style="display:block;width:100%;max-width:1000px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>

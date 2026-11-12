@@ -1,0 +1,19 @@
+<div class="section-header"><div class="index">SI18</div><h2>UML 类图：商城系统（用户 / 商品 / 交易三域）</h2></div>
+          <p>十来个类看着多，其实是三个域各自一条链：用户域（User–Address）、商品域（Product–Category）、交易域（Cart–Order–Payment）。面试时先说"我按业务域分成三块"，再动笔。</p>
+
+          <div class="callout"><strong>一句话答案：</strong>购物车和订单是两条独立链路，靠"下单"这个动作转换；购物车项可变，订单项一经生成不可变。</div>
+
+          <h3>Q：设计一个商城系统的核心类图</h3>
+          <p>先画三条主干，再补支付与枚举。注意图里用颜色区分了三个域，面试时可以直接指着讲"这条链是交易域"。</p>
+
+          <h3>三个关键设计点</h3>
+          <ul>
+            <li><strong>为什么购物车项和订单项要分成两个类：</strong>购物车项可以随便改数量、随手删；订单项是成交流水，下单后只能走退款。生命周期不同，合并会互相拖累。</li>
+            <li><strong>为什么支付渠道用接口：</strong>Payment 只依赖 <code>PayChannel</code>，支付宝只是其中一个实现；接微信支付时新增一个类即可，Payment 不动。</li>
+            <li><strong>为什么订单要单独存收货地址：</strong>用户会改地址、删地址，订单必须记住"当时寄到哪"，这是快照思想。</li>
+          </ul>
+
+          <div class="callout"><strong>追问：</strong>"库存扣减放哪？"——放在下单链路，由商品服务提供 <code>decreaseStock()</code>；但真正的高并发扣减要靠数据库原子操作或队列，类图表达不了，要口头补一句。</div>
+
+          <h3>完整类图</h3>
+          <img src="/images/uml/mall-class-diagram.png" alt="商城系统类图：用户域、商品域、交易域共 12 个类" style="display:block;width:100%;max-width:1000px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>

@@ -1,0 +1,19 @@
+<div class="section-header"><div class="index">SI22</div><h2>UML 类图：图书借阅系统</h2></div>
+          <p>这题的关键陷阱是<strong>"书"和"副本"要分开</strong>，以及借阅记录是历史数据、不能随副本删除。</p>
+
+          <div class="callout"><strong>一句话答案：</strong>Book 是书目、BookCopy 是物理副本；借阅记录关联副本和读者（不是组合）；预约挂在书上，罚款挂在借阅记录上。</div>
+
+          <h3>Q：设计图书借阅系统：借书、还书、续借、逾期罚款、预约排队</h3>
+          <p>先把需求里的每个动词落到类上，再决定关系：谁是整体、谁有生命周期、谁只是引用。</p>
+
+          <h3>三个关键设计点</h3>
+          <ul>
+            <li><strong>Book 与 BookCopy 必须分开：</strong>"这本书有 5 本"和"这 5 本里哪本能借"是两个问题；混成一个类就表达不了"有的在馆有的借出"。</li>
+            <li><strong>借阅记录是关联不是组合：</strong>副本报废，历史记录要留着——要能查"谁借过、有没有赔款"。用实心菱形等于说"删副本连带删记录"，账就没了。</li>
+            <li><strong>罚款挂在记录上：</strong><code>BorrowRecord ◆— 0..1 Fine</code>，一条借阅最多一笔罚款；逾期天数由 dueDate 和归还时间算，所以记录里必须有日期字段。</li>
+          </ul>
+
+          <div class="callout"><strong>追问：</strong>"预约怎么保证先来先得？"——<code>Reservation</code> 加 <code>queueNo</code>，归还时按 queueNo 最小者通知；并发下用数据库行锁或 Redis 有序集合。</div>
+
+          <h3>完整类图</h3>
+          <img src="/images/uml/library-diagram.png" alt="图书借阅系统类图：Book、BookCopy、BorrowRecord、Reservation、Fine" style="display:block;width:100%;max-width:1000px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
