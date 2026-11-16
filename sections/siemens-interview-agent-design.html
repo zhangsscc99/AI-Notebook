@@ -1,0 +1,50 @@
+<p>今天面试明确要考 Agent 设计。答题骨架：<strong>五层 + 两条横切</strong>——先给结构，再按面试官兴趣往下钻。开场一句话定调：「Agent 系统的难点不是能不能调通模型，而是在不可信输出之下保证状态正确、可审计、可回滚。」</p>
+
+          <div class="callout"><strong>答题顺序（照着说）：</strong>五层是什么 → 每层一个关键设计 → 两条横切（限流 + 可验证性）→ 主动留一个优化钩子。</div>
+
+          <h3>Q1：五层架构分别怎么设计</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>编排层 Agent Loop。</strong>用状态机而不是死循环：Plan → Act → Observe → Reflect。每轮必须产生<strong>可观测的状态变化</strong>，否则触发熔断，防止 ReAct 空转。三重预算：最大轮数、最大 token、最大墙钟时间，超限降级为「给出现状 + 建议」。</div>
+            <div class="flow-step" data-step="2"><strong>模型层。</strong>统一 <code class="inline">chat(messages, tools)</code> 抽象屏蔽供应商差异；降级链 主模型 → 备用模型 → 规则兜底；输出必须走<strong>结构化契约</strong>（intent + 参数 + 叙述），不合契约直接判失败重试，绝不把自由文本当指令执行。</div>
+            <div class="flow-step" data-step="3"><strong>工具层（最关键）。</strong>工具 = 声明式 schema（参数 / 副作用等级 / 超时 / 是否幂等）+ 实现。参数校验在<strong>服务端</strong>做；危险工具要人工确认；长输出落盘只回传路径。</div>
+            <div class="flow-step" data-step="4"><strong>记忆层。</strong>工作记忆（当前窗口）/ 情节记忆（历史会话摘要，可检索）/ 语义记忆（长期稳定事实）。写入策略比读取更重要：只把稳定事实写长期记忆，有 TTL 和容量上限，满了合并淘汰。</div>
+            <div class="flow-step" data-step="5"><strong>执行沙箱。</strong>容器 + cgroup 限制 CPU/内存/时间，网络默认禁，文件写操作限定在 workspace 内，所有产物留痕供审计。</div>
+          </div>
+
+          <h3>Q2：两条横切能力（面试官最爱追这里）</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>① 资源与限流</h3>
+              <p>任务开工前采样真实 CPU/内存/磁盘分档（绿/黄/橙/红），红灯直接跳过本轮；跨项目共享「重活名额」租约，避免多项目并行把 4 核打满；队列满就明确拒绝而不是无限堆积；超时分层：连接 3s / 读 60s / 总 120s，长任务异步化（先返回 task_id，客户端轮询）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>② 可验证性与可回滚</h3>
+              <p>每条功能自带<strong>可执行断言</strong>，Agent 干完必须跑通才算完成，不认「自我声明完成」；改动后跑全量回归，失败自动回滚；原子发布（新目录 + 软链切换），避免构建期白屏；全程记录谁改的、改了什么、验证结果、部署版本。</p>
+            </article>
+          </div>
+
+          <h3>Q3：必被追问的四个问题</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>模型输出不可靠，怎么防破坏数据</h3>
+              <p>三道闸：① 输出必须是结构化契约，服务端校验；② 数值类改动（余额、库存、等级）一律由<strong>确定性引擎</strong>算，模型只给意图不给结果；③ 危险操作分级 + 人工确认，所有写操作可回滚（软删除 + 版本表）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>多 Agent 并行怎么不互相踩</h3>
+              <p>隔离 + 串行化关键路径。隔离用 git worktree（每任务独立工作区与分支）；串行化用部署锁（同一时刻只允许一个部署）。合并时逐条 merge 并立刻验证，失败只回滚这一条。</p>
+            </article>
+            <article class="mini-card">
+              <h3>卡死或无限循环怎么办</h3>
+              <p>轮数 / 时间 / token 三重预算 + 「状态无变化」熔断 + 心跳超时（N 分钟无进展直接终止并汇报）。终止时保留现场（日志 + 中间产物）供人工接手。</p>
+            </article>
+            <article class="mini-card">
+              <h3>成本怎么控</h3>
+              <p>上下文压缩（只发状态摘要 + 最近 N 条）；缓存命中优先（prompt caching / 结果缓存）；分层用模型（调度用便宜的，重活给免费或低成本通道）；每任务预算硬上限。</p>
+            </article>
+          </div>
+
+          <h3>Q4：UML 上怎么表达（配合第 12–22 节的类图题）</h3>
+          <p><code class="inline">AgentLoop</code> 依赖 <code class="inline">ModelProvider«interface»</code>、<code class="inline">Tool«interface»</code>、<code class="inline">MemoryStore«interface»</code>（虚线箭头 = 依赖）；<code class="inline">OpenAIClient</code>、<code class="inline">ReadTool</code>、<code class="inline">DangerousTool</code> 用空心三角虚线指向接口（实现）；<code class="inline">AgentLoop</code> ◇— <code class="inline">MemoryStore</code> 用聚合表示持有。要点：<strong>组合优于继承、依赖抽象</strong>。</p>
+          <p>时序图八步：User → AgentLoop → ModelProvider（返回 intent/tool/args）→ <strong>Validator 服务端校验</strong> → ToolRegistry 取工具 → Tool.execute（<strong>装饰器包超时/重试/计费</strong>）→ 结果写 MemoryStore → 再问模型 → 答复。画图时主动点出「校验在服务端」「长输出只存引用」。</p>
+
+          <div class="callout"><strong>收尾句（可直接背）：</strong>「Agent 系统里『能跑』是最容易的部分；真正花时间的是让它不敢乱来、出错能退回、每步都可验证——这三点决定了它是玩具还是生产系统。」</div>

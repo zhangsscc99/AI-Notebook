@@ -1,0 +1,50 @@
+<p>第 2 小时是<strong>项目深挖</strong>（2 位面试官）：项目细节、实现思路、难点、可优化点、求职原因。这节讲<strong>怎么把项目讲成有取舍的工程故事</strong>，并用 AI-Notebook 和 Agent 自动化系统做范例。</p>
+
+          <h3>Q1：项目介绍的「三段式」（每个项目 90 秒）</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>一句话定位：</strong>这是什么产品、给谁用、解决什么问题。不要一上来说技术栈。</div>
+            <div class="flow-step" data-step="2"><strong>技术骨架：</strong>栈 + 部署形态 + <strong>一个关键技术决策和理由</strong>（这是钩子，面试官会顺着问）。</div>
+            <div class="flow-step" data-step="3"><strong>我的角色与结果：</strong>我负责哪部分、最难的技术点、量化结果（数字比形容词可信）。</div>
+          </div>
+          <div class="callout"><strong>AI-Notebook 范例：</strong>「面向 Agent 系统研究的可检索知识站，24 个专题、约 190 篇长文，用来系统性复习 Agent 架构。React 19 + TS + Vite，内容由自建管线从源文件生成结构化数据与搜索元数据；服务端做 Brotli 压缩、immutable 缓存与 SPA 回退。我负责全部设计与实现——最有价值的两个决策是『内容与代码彻底分离』和『全路由真实浏览器回归』。」</div>
+
+          <h3>Q2：最常被问的五个问题</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>最难的地方是什么</h3>
+              <p>别说「没遇到过」。要选<strong>有取舍</strong>的点。范例：Agent 自动改代码时多任务并行会互相踩 → git worktree 隔离工作区 + 独立分支 + 部署锁串行化关键路径，合并逐条验证、失败只回滚单条。真正的难点不是技术实现，而是<strong>定义「什么叫验证通过」</strong>——后来给每条功能加了可执行断言，Agent 自称完成不算数。</p>
+            </article>
+            <article class="mini-card">
+              <h3>流量涨 100 倍怎么改</h3>
+              <p>分层答：接入层（LB + CDN + HTTP/2）→ 应用层（无状态化 + 水平扩容 + 会话外置 Redis + 两级缓存）→ 数据层（读写分离 / 分库 / 缓存 / 消息队列削峰）→ 成本（限流 + 降级 + 异步化）→ <strong>先上可观测指标</strong>（QPS、P99、错误率、饱和度），否则扩容是盲目的。</p>
+            </article>
+            <article class="mini-card">
+              <h3>怎么保证代码质量</h3>
+              <p>分层测试：单测覆盖核心逻辑、集成测覆盖接口契约、E2E 覆盖关键用户路径；<strong>可执行验收</strong>——每个功能自带验证命令，交付即验证；门禁：不过不合入，改动后跑全量回归，失败自动回滚；评审重点看「变更影响面」和「有没有更简单的写法」。</p>
+            </article>
+            <article class="mini-card">
+              <h3>怎么和别人协作</h3>
+              <p>契约先行（接口与数据结构先定，再并行开发）；进度三态（已完成 / 进行中 / 阻塞）+ 阻塞点具体到人；有分歧用数据决策（压测结果、错误率），不用个人偏好。</p>
+            </article>
+            <article class="mini-card">
+              <h3>求职 / 离职原因</h3>
+              <p>结构：认可对方 → 我的方向 → 匹配点。「现在做全栈交付和 Agent 落地，技术深度够但业务场景相对单一。西门子医疗吸引我的是医疗场景对<strong>可靠性与合规</strong>的极高要求，这正是我擅长的方向（可验证、可回滚、可审计），而且这里的工程问题是真实临床场景，不是纯流量指标。」<strong>不说前公司坏话。</strong></p>
+            </article>
+            <article class="mini-card">
+              <h3>还能怎么优化</h3>
+              <p>主动给 2–3 条具体可执行的：内容版本化支持增量复习；搜索从 Fuse.js 换 BM25 + 向量混合检索；补前端性能指标（LCP/INP/CLS）与错误上报；全路由冒烟扩成截图基线视觉回归。</p>
+            </article>
+          </div>
+
+          <h3>Q3：现场类设计题怎么答（以「文件上传服务」为例）</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>接口：</strong><code class="inline">initUpload</code>（返回 uploadId + 分片凭证）→ <code class="inline">uploadChunk</code>（幂等，带分片号）→ <code class="inline">completeUpload</code>（合并 + 校验哈希）。</div>
+            <div class="flow-step" data-step="2"><strong>类：</strong><code class="inline">UploadSession</code>（状态机 INIT→UPLOADING→MERGING→DONE/FAILED）、<code class="inline">ChunkStore</code>（存储抽象）、<code class="inline">HashVerifier</code>（策略：MD5 / SHA256）。</div>
+            <div class="flow-step" data-step="3"><strong>并发点：</strong>分片并行上传但有并发上限；断点续传记录已上传分片；合并阶段单写。</div>
+            <div class="flow-step" data-step="4"><strong>流量控制：</strong>单用户并发上传数限制、单文件大小上限、分片大小自适应。</div>
+            <div class="flow-step" data-step="5"><strong>中断处理：</strong>会话超时回收、客户端重连后按 uploadId 恢复、已上传分片不重传。</div>
+          </div>
+          <p><strong>加分点：</strong>主动说出「<strong>幂等键</strong>」和「<strong>状态机</strong>」这两个词——它们直接对应真实工程里的坑（重复上传、并发合并、半成品会话）。</p>
+
+          <h3>Q4：反问面试官（准备 2–3 个）</h3>
+          <p>「这个岗位目前在系统设计上最大的技术挑战是什么？」「团队现在的发布节奏和测试策略是怎样的？」「医疗场景下，你们如何平衡交付速度和合规验证？」<strong>不要问</strong>加班多不多、薪资多少（HR 环节）、公司前景如何。</p>

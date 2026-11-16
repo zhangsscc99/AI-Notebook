@@ -1,0 +1,64 @@
+<p>第 9 节讲的是锁与索引，这一节补上<strong>流量控制</strong>和<strong>连接建立与中断</strong>——面试要点里点名的另外两块。答法统一：<strong>算法/机制 → 参数怎么定 → 项目里怎么落地</strong>。</p>
+
+          <h3>Q1：限流四种算法怎么选</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>固定窗口</h3>
+              <p>每分钟计数，到点清零。实现最简单，但有<strong>边界双倍流量</strong>问题（59 秒和 61 秒各打满一次配额）。只适合粗粒度配额。</p>
+            </article>
+            <article class="mini-card">
+              <h3>滑动窗口</h3>
+              <p>把窗口切成小格滚动统计，边界准确、曲线平滑，内存略大。大多数 API 限流的默认选择。</p>
+            </article>
+            <article class="mini-card">
+              <h3>漏桶</h3>
+              <p>请求先进桶，以<strong>恒定速率</strong>流出。抗突发，保护下游固定处理能力；代价是突发请求要排队、延迟升高。</p>
+            </article>
+            <article class="mini-card">
+              <h3>令牌桶</h3>
+              <p>按速率生成令牌，有令牌才放行，桶容量允许<strong>一定突发</strong>。平均速率受控 + 用户体验好，最常用。</p>
+            </article>
+          </div>
+          <p><strong>追问「限流放哪一层」：</strong>网关层做全局保护（每 IP / 每租户）、应用层做业务配额（每用户每日次数）、客户端层做预算（提前自我降速，减少 429）。多层配合，越靠近上游越粗。</p>
+
+          <h3>Q2：背压（backpressure）怎么做</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>本质：</strong>让生产速度感知下游能力，而不是无限堆积。无界队列是最常见的错误——它把过载从「明确拒绝」变成「内存耗尽」。</div>
+            <div class="flow-step" data-step="2"><strong>手段：</strong>有界队列 + 拒绝策略（CallerRuns 让调用方自己执行，天然降速）；响应式流的 request(n) 拉模式；下游返回水位信号（429 / Retry-After）；异步任务排队超时后降级为稍后重试。</div>
+            <div class="flow-step" data-step="3"><strong>我的落地：</strong>Agent 任务调度有准入控制——开工前采样 CPU/负载/磁盘分档，红灯整轮跳过；并发进程数有全局上限；队列满时明确告知「当前繁忙，稍后重试」，排队到超时是最差体验。</div>
+          </div>
+
+          <h3>Q3：熔断 / 降级 / 隔离的区别</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>熔断 Circuit Breaker</h3>
+              <p>下游连续失败超过阈值 → 直接快速失败一段时间（closed → open → half-open 试探），避免请求堆积把上游也拖垮。关键参数：失败率阈值、最小请求数、打开时长。</p>
+            </article>
+            <article class="mini-card">
+              <h3>降级 Fallback</h3>
+              <p>主逻辑不可用时返回备用结果：缓存旧值、默认值、简化功能。原则是<strong>降级要有明确语义</strong>（告诉用户这是旧数据/简化结果），而不是静默给错数据。</p>
+            </article>
+            <article class="mini-card">
+              <h3>隔离 Bulkhead</h3>
+              <p>不同依赖用不同线程池/连接池/信号量，一个慢依赖不拖垮全部。船体分舱的比喻最好用：进水只淹一个舱。</p>
+            </article>
+            <article class="mini-card">
+              <h3>组合顺序</h3>
+              <p>超时 → 重试（仅幂等 + 网络类错误，指数退避带抖动）→ 熔断 → 降级。顺序错了会放大故障：先熔断后重试才有意义。</p>
+            </article>
+          </div>
+
+          <h3>Q4：连接建立与中断（TCP 层面）</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>三次握手：</strong>SYN → SYN+ACK → ACK。为什么不是两次？防止历史重复的连接请求建立无效连接、并确认双方收发能力都正常。</div>
+            <div class="flow-step" data-step="2"><strong>四次挥手：</strong>FIN → ACK → FIN → ACK。为什么是四次？TCP 全双工，两个方向要分别关闭。</div>
+            <div class="flow-step" data-step="3"><strong>TIME_WAIT：</strong>主动关闭方等 2MSL，保证最后的 ACK 能到达 + 让旧连接的重复包在网络中消亡。<strong>大量 TIME_WAIT 说明短连接太多</strong> → 改连接池 / keep-alive。</div>
+            <div class="flow-step" data-step="4"><strong>连接池参数：</strong>最大连接数、最小空闲、获取超时、空闲回收、最大存活、健康检查。最大连接数要匹配下游承载（数据库 max_connections），否则只是把排队挪到服务端。泄漏防护：借出必归还 + 借用超时告警。</div>
+            <div class="flow-step" data-step="5"><strong>超时分层：</strong>连接 3s / 读 60s / 整体 120s。<strong>外层超时必须大于内层</strong>，否则外层断了内层还在跑，白烧资源。重试只对幂等操作，总次数 2–3 次封顶。</div>
+            <div class="flow-step" data-step="6"><strong>长连接保活与重连：</strong>应用层心跳（30s）+ TCP keepalive；重连用指数退避 + <strong>随机抖动</strong>，避免大量客户端同时重连打垮服务端（惊群）。断线期间的请求要区分幂等（可重放）与非幂等（必须查状态，不能盲重试）。</div>
+          </div>
+
+          <h3>Q5：WebSocket / SSE 中断怎么处理</h3>
+          <p>消息带<strong>序号</strong>，服务端保留最近 N 条；重连时客户端上报 <code class="inline">last_seq</code>，服务端增量补发。客户端本地缓存未确认消息，重连后重放；服务端校验会话 token，避免旧连接残留写冲突。流式输出（大模型场景）同理：SSE 断了要从断点续，而不是从头重生成。</p>
+
+          <div class="callout"><strong>收尾句（可背）：</strong>「并发和流控本质是同一件事——让系统在过载时的降级行为是<strong>可预测</strong>的：宁可明确拒绝，也不要静默变慢或雪崩。」</div>

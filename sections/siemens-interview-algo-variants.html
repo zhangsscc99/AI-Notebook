@@ -1,0 +1,61 @@
+<p>面试说要考「热门算法题的<strong>变种</strong>，并做加强/升级」。这节不讲刷题，讲<strong>怎么答</strong>——面试官真正看的是：思路表达、边界覆盖、复杂度分析、有没有优化方案。</p>
+
+          <h3>Q1：五步答题流程（每题都照这个说出口）</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>复述 + 澄清。</strong>用自己话重述题目，确认输入规模、数据类型、能否重复、是否原地、返回什么。主动问边界：空输入？单元素？溢出？有环？</div>
+            <div class="flow-step" data-step="2"><strong>先给暴力解 + 复杂度。</strong>O(n²) 也行，证明思路通，并说清瓶颈在哪。这一步让你有东西可写，也给面试官一个纠偏的机会。</div>
+            <div class="flow-step" data-step="3"><strong>给优化思路。</strong>说清用哪种结构降复杂度：哈希表降查找、双指针降嵌套、堆取 TopK、单调栈处理「下一个更大」。</div>
+            <div class="flow-step" data-step="4"><strong>写代码前先说结构。</strong>变量含义、循环不变量、终止条件。说完再写，面试官能跟上。</div>
+            <div class="flow-step" data-step="5"><strong>写完自测。</strong>最小用例 + 边界用例 + 一个反例，然后报时间复杂度/空间复杂度。</div>
+          </div>
+
+          <h3>Q2：母题与常见变种（背母题，不背题解）</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>数组 / 哈希</h3>
+              <p>两数之和 → 三数之和（排序+双指针+去重）、和最接近、子数组和为 K（前缀和+哈希）、允许重复。关键：去重逻辑与前缀和转化。</p>
+            </article>
+            <article class="mini-card">
+              <h3>滑动窗口</h3>
+              <p>最长无重复子串、最小覆盖子串、窗口内最大值（单调队列）。关键：何时扩窗口、何时缩、窗口内用什么结构维护。</p>
+            </article>
+            <article class="mini-card">
+              <h3>链表</h3>
+              <p>反转（区间 / 成组 K 个）、环检测与入口、两链表相交、复制带随机指针。关键：虚拟头节点、快慢指针、改指针前先存 next。</p>
+            </article>
+            <article class="mini-card">
+              <h3>二叉树</h3>
+              <p>层序变种（每层右视图 / 之字形）、路径和、序列化与反序列化、最近公共祖先。关键：递归函数<strong>返回什么信息</strong>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>动态规划</h3>
+              <p>背包变种、股票买卖（冷冻期 / 手续费 / 限次数）、编辑距离、最长递增子序列。关键：状态定义 &gt; 转移方程；一维滚动优化空间。</p>
+            </article>
+            <article class="mini-card">
+              <h3>堆 / TopK</h3>
+              <p>数据流第 K 大、前 K 个高频词、合并 K 个有序链表、滑动窗口中位数（双堆）。关键：小顶堆维持大小 K。</p>
+            </article>
+            <article class="mini-card">
+              <h3>二分</h3>
+              <p>旋转数组找最小值、找峰值、<strong>答案二分</strong>（最小化最大值 / 最大化最小值，如「运货问题」「分割数组」）。关键：单调性证明 + 边界写法统一。</p>
+            </article>
+            <article class="mini-card">
+              <h3>图</h3>
+              <p>拓扑排序（课程表）、岛屿数量（并查集 / DFS）、最短路径（BFS 无权 / Dijkstra 非负权）。关键：访问标记打上的时机。</p>
+            </article>
+          </div>
+
+          <h3>Q3：边界清单（每题写完过一遍）</h3>
+          <p>空数组 / 空字符串 / null；单元素；全部相同；已排序 / 完全逆序；含负数 / 含 0 / 极大值溢出（用 long）；重复值（去重是否要求稳定）；下标越界与切片边界；递归栈深度（链表或树退化成链时）。</p>
+
+          <h3>Q4：题目被「加强」了怎么答</h3>
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>数据流版 / 在线版：</strong>不能回头扫 → 堆、单调队列、哈希 + 增量维护。说清「我只维护必要状态」。</div>
+            <div class="flow-step" data-step="2"><strong>内存受限版：</strong>不能全量加载 → 分块 + 外部排序；或概率结构（布隆过滤器、HyperLogLog、Count-Min Sketch），并主动说明「允许误差、误差界是 ε」。</div>
+            <div class="flow-step" data-step="3"><strong>并发版：</strong>先划分无共享分片 → 各分片独立处理 → 最后归并；要全局有序就用分段锁或单写多读。</div>
+            <div class="flow-step" data-step="4"><strong>分布式版：</strong>哈希分片 → 局部 TopK/聚合 → 全局归并；主动提数据倾斜（热点 key 加盐打散、二次聚合）。</div>
+          </div>
+          <div class="callout"><strong>示范回答（TopK 加强版）：</strong>「单机内存够就用小顶堆 O(n log k)；如果每天上亿条且内存受限，我会先按哈希分片到多台各算 TopK，再汇总取全局 TopK，并注意热门 key 的倾斜——加盐打散后二次聚合。」</div>
+
+          <h3>Q5：卡住时的话术</h3>
+          <p><strong>不要说「让我想想」然后沉默。</strong>先说当前思路和卡在哪：「我打算用滑动窗口，但这里重复元素导致左边界不好确定，我在想用哈希记录最后出现位置。」——面试官通常会顺着你的卡点给提示，接住提示继续推进就是加分。写错了主动改口，「这里应该取 max 而不是 min」比被指出好。</p>
