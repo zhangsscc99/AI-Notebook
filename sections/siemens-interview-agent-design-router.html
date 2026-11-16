@@ -4,7 +4,7 @@
 
           <h3>Q1：路由层的类怎么分</h3>
 
-          <img src="/images/uml/agent-router-class.png" alt="模型路由类图：ModelRouter、ModelProvider、RateLimiter、CircuitBreaker、FallbackChain、ResponseCache、TokenBudget" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+          <a href="/images/uml/agent-router-class.png" target="_blank" rel="noopener" title="点开看原图"><img src="/images/uml/agent-router-class.png" alt="模型路由类图：ModelRouter、ModelProvider、RateLimiter、CircuitBreaker、FallbackChain、ResponseCache、TokenBudget" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/></a>
 
           <div class="grid-2">
             <article class="mini-card">
@@ -35,7 +35,7 @@
 
           <h3>Q2：主模型挂了到底怎么走（时序图逐段读）</h3>
 
-          <img src="/images/uml/agent-router-seq.png" alt="模型降级时序图：限流、熔断判定、主模型失败、备用模型重试、规则兜底" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+          <a href="/images/uml/agent-router-seq.png" target="_blank" rel="noopener" title="点开看原图"><img src="/images/uml/agent-router-seq.png" alt="模型降级时序图：限流、熔断判定、主模型失败、备用模型重试、规则兜底" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/></a>
 
           <div class="flow">
             <div class="flow-step" data-step="1"><strong>先限流：</strong>没有令牌就地快速失败并返回 Retry-After。<strong>不要排队</strong>——排队会在下游恢复时形成回流冲击（thundering herd）。</div>

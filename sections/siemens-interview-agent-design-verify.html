@@ -4,7 +4,7 @@
 
           <h3>Q1：验证与部署闭环的类怎么分</h3>
 
-          <img src="/images/uml/agent-verify-class.png" alt="验证与部署闭环类图：WorktreeManager、Verifier、StaticCheck、TestRunner、DeployGate、AtomicRelease、RollbackManager" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+          <a href="/images/uml/agent-verify-class.png" target="_blank" rel="noopener" title="点开看原图"><img src="/images/uml/agent-verify-class.png" alt="验证与部署闭环类图：WorktreeManager、Verifier、StaticCheck、TestRunner、DeployGate、AtomicRelease、RollbackManager" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/></a>
 
           <div class="grid-2">
             <article class="mini-card">
@@ -35,7 +35,7 @@
 
           <h3>Q2：一条任务从改码到上线（时序图逐段读）</h3>
 
-          <img src="/images/uml/agent-verify-seq.png" alt="任务从改码到上线时序图：worktree、验证、断言分级、合并、原子发布、健康检查、回滚" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+          <a href="/images/uml/agent-verify-seq.png" target="_blank" rel="noopener" title="点开看原图"><img src="/images/uml/agent-verify-seq.png" alt="任务从改码到上线时序图：worktree、验证、断言分级、合并、原子发布、健康检查、回滚" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/></a>
 
           <div class="flow">
             <div class="flow-step" data-step="1"><strong>先分地，再干活。</strong>worktree 必须在 Agent 动手之前创建；让它直接改主目录，等于放弃回滚能力。</div>

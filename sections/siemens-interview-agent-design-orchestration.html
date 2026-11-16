@@ -4,7 +4,7 @@
 
           <h3>Q1：编排层的类怎么划分，为什么这么抽象</h3>
 
-          <img src="/images/uml/agent-orchestration-class.png" alt="Coding Agent 编排与规划层类图：AgentLoop、Planner、TaskGraph、Budget、StopCondition、Trace" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+          <a href="/images/uml/agent-orchestration-class.png" target="_blank" rel="noopener" title="点开看原图"><img src="/images/uml/agent-orchestration-class.png" alt="Coding Agent 编排与规划层类图：AgentLoop、Planner、TaskGraph、Budget、StopCondition、Trace" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/></a>
 
           <div class="grid-2">
             <article class="mini-card">
@@ -27,7 +27,7 @@
 
           <h3>Q2：一次任务到底怎么跑（时序图逐段读）</h3>
 
-          <img src="/images/uml/agent-orchestration-seq.png" alt="Coding Agent 一次任务执行时序图：run、plan、guard、decide、execute、replan、abort" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+          <a href="/images/uml/agent-orchestration-seq.png" target="_blank" rel="noopener" title="点开看原图"><img src="/images/uml/agent-orchestration-seq.png" alt="Coding Agent 一次任务执行时序图：run、plan、guard、decide、execute、replan、abort" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/></a>
 
           <div class="flow">
             <div class="flow-step" data-step="1"><strong>入口只做两件事：</strong>登记任务与预算、向 Planner 要一张 TaskGraph。<strong>不要在入口就开始调模型</strong>——先有形（图），再有神（推理）。</div>

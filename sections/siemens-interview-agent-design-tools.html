@@ -4,7 +4,7 @@
 
           <h3>Q1：工具层的类怎么分</h3>
 
-          <img src="/images/uml/agent-tool-class.png" alt="Coding Agent 工具层类图：Tool、ToolSpec、ToolRegistry、PermissionPolicy、ApprovalGate、ToolInvoker、Sandbox、AuditLog" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+          <a href="/images/uml/agent-tool-class.png" target="_blank" rel="noopener" title="点开看原图"><img src="/images/uml/agent-tool-class.png" alt="Coding Agent 工具层类图：Tool、ToolSpec、ToolRegistry、PermissionPolicy、ApprovalGate、ToolInvoker、Sandbox、AuditLog" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/></a>
 
           <div class="grid-2">
             <article class="mini-card">
@@ -35,7 +35,7 @@
 
           <h3>Q2：一次危险调用的完整链路（时序图逐段读）</h3>
 
-          <img src="/images/uml/agent-tool-seq.png" alt="危险工具调用时序图：参数校验、权限判定、三级分支、人工审批、沙箱执行、审计" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+          <a href="/images/uml/agent-tool-seq.png" target="_blank" rel="noopener" title="点开看原图"><img src="/images/uml/agent-tool-seq.png" alt="危险工具调用时序图：参数校验、权限判定、三级分支、人工审批、沙箱执行、审计" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/></a>
 
           <div class="flow">
             <div class="flow-step" data-step="1"><strong>先校验参数，再谈权限。</strong>顺序反了会浪费审批（人去点了一个参数根本不合法），也会把无效调用写进审计噪声。</div>
