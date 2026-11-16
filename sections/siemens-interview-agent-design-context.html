@@ -1,0 +1,92 @@
+<p>Agent 跑十分钟就崩，八成是上下文问题：要么塞满了，要么丢了关键信息。这一层解决的就是<strong>"给模型的提示词里应该有什么"</strong>——它决定了 Agent 能不能做长任务。</p>
+
+          <div class="callout"><strong>一句话定义：</strong>上下文管理 = 在有限窗口内做<strong>成本与信息的权衡</strong>：哪些压成摘要、哪些保留原文、哪些去检索、哪些只留引用。记忆则分三层：会话（短）、情节（可检索的历史）、语义（稳定事实）。</div>
+
+          <h3>Q1：上下文与记忆的类怎么分</h3>
+
+          <img src="/images/uml/agent-context-class.png" alt="Coding Agent 上下文与记忆类图：ContextManager、Compressor、MessageBuffer、MemoryStore、Retriever、Embedder" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>ContextManager：唯一的"组 prompt"入口</h3>
+              <p>三样东西拼起来：系统提示 + 最近 N 轮原文 + 检索到的相关片段。<strong>所有拼装逻辑集中在这一个类</strong>，而不是散在各个 Agent 里——否则你会发现有五处不同的 token 预算算法。</p>
+            </article>
+            <article class="mini-card">
+              <h3>TokenCounter：别用字符数估算</h3>
+              <p>中文、代码、JSON 的 token 密度差异极大。用真实 tokenizer 计数（或 provider 返回的 usage 反推），并且<strong>预留输出空间</strong>——窗口 100k、输入 98k，模型就没有空间回答。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Compressor：压缩 ≠ 截断</h3>
+              <p>截断会丢掉"为什么这么改"的决策链。正确做法是分层压缩：早期对话→结构化摘要（决策、已排除方案、未完成项）；工具大输出→只留结论与 artifactUri；失败尝试→保留失败原因（避免重复踩坑）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>MemoryStore 三实现，别混用</h3>
+              <p><code class="inline">SessionMemory</code> 有 TTL（一次任务的生命周期）；<code class="inline">EpisodicMemory</code> 是 SQLite + FTS5 + 向量，用于"上次改这个模块遇到过什么"；<code class="inline">SemanticMemory</code> 存稳定事实（项目约定、架构决策），带 LRU 淘汰。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Retriever：混合检索而不是纯向量</h3>
+              <p>纯向量对函数名、错误码这类精确 token 很差。用 BM25（FTS5）+ 向量并行召回再融合（RRF 或加权），召回到的 <code class="inline">Ref</code> 只放"片段 + 路径"，让模型自己决定要不要读全文。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Embedder 独立出来</h3>
+              <p>换模型（本地 → API）时不影响检索逻辑；批量 embedding 与在线查询的路径也不同。抽象出来还能做"同一份数据两套索引"的 A/B。</p>
+            </article>
+          </div>
+
+          <h3>Q2：上下文快满时到底发生什么（时序图逐段读）</h3>
+
+          <img src="/images/uml/agent-context-seq.png" alt="上下文超阈值时序图：计数、压缩、保留近期、混合检索、拼装 prompt" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>在 80% 就动手，不要等 100%。</strong>阈值留出 20% 给输出和工具结果；到 100% 才压缩，只能砍掉最需要的内容。</div>
+            <div class="flow-step" data-step="2"><strong>压缩是有结构的。</strong>摘要必须包含三样：做过的决策、排除的方案与原因、未完成的 TODO。缺了第三项，Agent 会忘记自己还要干什么。</div>
+            <div class="flow-step" data-step="3"><strong>近期轮次保留原文。</strong>最近 3–5 轮是"工作记忆"，压缩会让它丢失精确参数（文件路径、行号、错误码）。原则：<strong>近处不压，远处才压</strong>。</div>
+            <div class="flow-step" data-step="4"><strong>检索按当前目标走。</strong>用当前 step 的 intent 做查询，而不是整个任务目标——任务目标太宽，召回会发散。</div>
+            <div class="flow-step" data-step="5"><strong>并行查两路再融合。</strong>FTS5 关键词 + 向量语义，结果去重后按分数融合取 Top-K（K 通常 5–8）；再多就是噪声。</div>
+            <div class="flow-step" data-step="6"><strong>引用而不是全文。</strong>片段 + 路径给模型，需要时它自己用 read 工具去读。这样"上下文只付一次便宜的钱"。</div>
+          </div>
+
+          <h3>Q3：失败模式与对策</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>压缩后反复做同一件事</h3>
+              <p>现象：摘要丢了"已尝试失败"的信息。<br/>对策：摘要模板里强制字段 <code class="inline">attempts[]</code>（尝试 + 失败原因），并在 system 提示里声明"不要重复已失败的方案"。</p>
+            </article>
+            <article class="mini-card">
+              <h3>工具输出淹没上下文</h3>
+              <p>现象：一次测试跑出 3000 行日志。<br/>对策：工具侧就截断（前 50 行 + 后 50 行 + 摘要），全文落盘；ContextManager 只认 <code class="inline">artifactUri</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>检索召回不相关</h3>
+              <p>现象：查"部署失败"召回三年前的目录结构。<br/>对策：加时间衰减与来源权重（本项目 &gt; 全局笔记），并限制候选池；召回后做一次 rerank。</p>
+            </article>
+            <article class="mini-card">
+              <h3>记忆污染</h3>
+              <p>现象：把临时结论写进长期记忆，之后一直被误导。<br/>对策：写入只允许<strong>显式事实</strong>（用户偏好、架构决策），并带 TTL 与置信度；过程性内容只进 Trace，不进 SemanticMemory。</p>
+            </article>
+          </div>
+
+          <h3>Q4：指标</h3>
+          <p><strong>上下文效率</strong>：平均输入 token / 每步、压缩触发率、压缩后任务成功率（压缩质量的核心指标）；<strong>检索</strong>：召回命中率（被引用片段是否真被用到）、Top-K 使用分布（K 太大没人用就是浪费）；<strong>记忆</strong>：写入量 / 淘汰量、检索延迟 P99；<strong>成本</strong>：缓存命中率（同样的前缀重复计费很常见）。</p>
+
+          <h3>Q5：面试追问</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>"为什么不直接上 1M 上下文大模型？"</h3>
+              <p>三个理由：贵（token 线性计费）、慢（长上下文首字延迟显著上升）、<strong>注意力退化</strong>（关键信息在中间位置时召回明显下降）。窗口大不等于该塞满。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"摘要由模型生成，会不会丢关键细节？"</h3>
+              <p>会，所以摘要只压"叙述性内容"，不压"机器可校验的东西"：文件路径、命令、错误码、diff 哈希一律原样保留在结构化字段里，只压缩推理过程。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"多轮会话怎么记住用户偏好？"</h3>
+              <p>偏好属于 SemanticMemory：抽取成键值对（如 <code class="inline">prefers: concise</code>），带来源与时间；注入位置固定在 system 提示末尾，避免被长上下文冲淡。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"怎么评估上下文策略好坏？"</h3>
+              <p>离线用固定任务集 A/B（同一任务，压缩 vs 不压缩），比较成功率、步数、token；线上看"压缩后是否重复劳动"这个代理指标。不看指标的策略优化都是玄学。</p>
+            </article>
+          </div>
+
+          <div class="callout"><strong>收尾句：</strong>「上下文管理的目标不是'把窗口塞满'，而是让每一步只看见<strong>此刻真正需要的那一小块</strong>——这跟人做长任务的注意力管理是同一件事。」</div>

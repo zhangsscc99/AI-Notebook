@@ -1,0 +1,60 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块一：一次任务的执行时序（含无进展熔断）
+
+actor "用户" as U
+participant "AgentLoop" as L
+participant "Planner" as P
+participant "TaskGraph" as G
+participant "ModelProvider" as M
+participant "Tool 实现" as T
+participant "Trace 审计" as R
+
+U -> L : run(goal, budget)
+activate L
+L -> R : start(taskId, budget)
+L -> P : plan(goal, ctx)
+P -> M : 结构化计划请求
+M --> P : JSON {steps, deps}
+P --> L : TaskGraph
+L -> G : ready()
+G --> L : [step1, step2]
+
+loop 直到 graph.isDone() 或触发熔断
+  L -> L : guard() 预算 / 无进展 / 心跳
+  alt 预算耗尽或无进展
+    L -> R : abort(reason)
+    L --> U : FAILED(reason, 现场快照)
+  else 正常推进
+    L -> M : decide(step, 上下文)
+    M --> L : {tool, args}
+    L -> T : execute(args)
+    T --> L : Observation(结构化)
+    L -> G : markDone(step)
+    L -> R : append(step, obs)
+    opt Observation 表明失败或偏离
+      L -> P : replan(graph, obs)
+      P --> L : TaskGraph'
+    end
+  end
+end
+
+L -> R : finish(result)
+L --> U : Result(artifacts, trace, usage)
+deactivate L
+@enduml

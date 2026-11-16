@@ -1,0 +1,87 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块二：工具层与权限沙箱（类图）
+
+interface Tool {
+  + spec(): ToolSpec
+  + invoke(args: Map, ctx: ToolContext): ToolResult
+}
+class ToolSpec {
+  + name: String
+  + paramsSchema: JSONSchema
+  + sideEffect: SideEffect
+  + timeout: Duration
+  + idempotent: bool
+}
+enum SideEffect {
+  READ
+  WRITE
+  DANGEROUS
+}
+class ToolRegistry {
+  + register(tool)
+  + get(name): Tool
+  + visibleTo(principal): [ToolSpec]
+}
+class PermissionPolicy {
+  + check(spec, args, principal): Decision
+}
+class ApprovalGate {
+  + request(action): Approval
+  + await(timeout): bool
+}
+class ToolInvoker {
+  + invoke(name, args): ToolResult
+}
+
+note right of ToolInvoker
+  装饰器链：
+  参数校验 → 权限 → 审批
+  → 超时 → 幂等重试 → 计量 → 审计
+end note
+
+class Sandbox {
+  + exec(cmd, limits: CgroupLimits): ExecResult
+}
+class AuditLog {
+  + record(who, tool, args, result, cost)
+}
+class ToolResult {
+  + ok: bool
+  + summary: String
+  + artifactUri: String
+  + truncated: bool
+}
+
+ToolRegistry o-- "0..*" Tool : 注册
+Tool --> ToolSpec : 1 自描述
+ToolSpec --> SideEffect
+ToolInvoker --> ToolRegistry : 1
+ToolInvoker --> PermissionPolicy : 1
+ToolInvoker --> ApprovalGate : 1
+ToolInvoker ..> Sandbox : 委托执行
+ToolInvoker --> AuditLog : 1
+Tool ..> ToolResult : 返回
+PermissionPolicy ..> Decision : 返回
+
+note bottom of ToolRegistry
+  职责分离：工具只描述「能做什么」与「怎么做」，
+  注册表负责发现，ToolInvoker 负责横切
+  （校验 / 权限 / 审批 / 超时 / 重试 / 计量 / 审计）。
+end note
+@enduml

@@ -1,0 +1,104 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块一：编排与规划层（类图）
+
+package "编排内核" {
+  class AgentLoop {
+    + run(task: Task): Result
+    - act(step: PlanStep): Observation
+    - reflect(obs): Decision
+    - guard(): StopReason
+    - state: LoopState
+  }
+  enum LoopState {
+    PLANNING
+    ACTING
+    OBSERVING
+    REFLECTING
+    DONE
+    FAILED
+    ABORTED
+  }
+  interface StopCondition {
+    + shouldStop(state, budget): bool
+  }
+  class BudgetGuard
+  class NoProgressGuard
+  class Trace {
+    + append(Event)
+    + replay(taskId): [Event]
+  }
+}
+
+package "规划" {
+  interface Planner {
+    + plan(goal: String, ctx): TaskGraph
+    + replan(graph, obs): TaskGraph
+  }
+  class LLMPlanner
+  class RulePlanner
+  class TaskGraph {
+    + add(step, deps)
+    + ready(): [PlanStep]
+    + markDone(id)
+    + isDone(): bool
+  }
+  class PlanStep {
+    + id: String
+    + intent: String
+    + toolHint: String
+    + dependsOn: [String]
+    + status
+  }
+}
+
+package "配额" {
+  class Task {
+    + id: UUID
+    + goal: String
+    + status: TaskStatus
+  }
+  class Budget {
+    + maxSteps: int
+    + maxTokens: int
+    + maxWallClock: Duration
+    + consumed(): Usage
+    + exhausted(): bool
+  }
+}
+
+AgentLoop ..> Planner : 依赖抽象
+AgentLoop ..> TaskGraph
+AgentLoop --> LoopState : current
+AgentLoop --> StopCondition : 1..*
+AgentLoop --> Trace : 1
+AgentLoop ..> Task : run(task)
+Task "1" -- "1" Budget : 预算
+BudgetGuard ..|> StopCondition
+NoProgressGuard ..|> StopCondition
+Planner <|.. LLMPlanner
+Planner <|.. RulePlanner
+TaskGraph *-- "1..*" PlanStep : 组成
+
+note bottom of AgentLoop
+  图例：实线  <-->  关联（长期持有，标多重性）
+  虚线  ..>   依赖（临时使用 / 参数）
+  空心菱形 o-- 聚合   实心菱形 *-- 组合
+  空心三角虚线 <|..   实现接口
+end note
+@enduml

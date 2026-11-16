@@ -1,0 +1,84 @@
+<p>这是 Coding Agent 系统设计的<strong>第一层：谁来决定"做什么"，以及什么时候该停</strong>。面试里如果让你「设计一个能自己改代码的 Agent」，先把这一层讲清楚，后面四个模块都是它的配件。</p>
+
+          <div class="callout"><strong>一句话定义：</strong>编排层的本质是把「一次性问答」变成「有状态、有预算、可中断的循环」，并且保证循环<strong>要么收敛到结果，要么带着可诊断的现场退出</strong>——绝不允许悄悄卡死。</div>
+
+          <h3>Q1：编排层的类怎么划分，为什么这么抽象</h3>
+
+          <img src="/images/uml/agent-orchestration-class.png" alt="Coding Agent 编排与规划层类图：AgentLoop、Planner、TaskGraph、Budget、StopCondition、Trace" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>AgentLoop：只管"推进"，不管"怎么想"</h3>
+              <p>它持有 <code class="inline">LoopState</code>，循环做三件事：向 Planner 要计划、向 ModelProvider 要决策、把 Observation 写回 TaskGraph。<strong>它不包含任何提示词</strong>——提示词在 Planner 与模型层，这样换模型/换规划策略不用动循环。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Planner 抽象：为什么必须是接口</h3>
+              <p>因为规划有三种完全不同的实现：<code class="inline">LLMPlanner</code>（灵活、贵、不确定）、<code class="inline">RulePlanner</code>（确定性、便宜、覆盖窄）、以及"人工给的计划"。做成接口后，同一个循环可以在「模型不可用」时退回规则规划——这就是降级链在<strong>规划层</strong>的对应物。</p>
+            </article>
+            <article class="mini-card">
+              <h3>TaskGraph：为什么不是一条 List</h3>
+              <p>真实任务有依赖（"先读代码再改，改完再跑测试"）。用带依赖的图，<code class="inline">ready()</code> 只返依赖已满足的步骤，天然支持并行执行与局部重规划；用线性列表就只能顺序硬走，一旦某步失败得整体重来。</p>
+            </article>
+            <article class="mini-card">
+              <h3>StopCondition：把"何时停"变成可插拔策略</h3>
+              <p><code class="inline">BudgetGuard</code>（步数/token/墙钟耗尽）、<code class="inline">NoProgressGuard</code>（连续 N 轮状态哈希不变）、<code class="inline">HeartbeatGuard</code>（N 分钟无事件）。三者用组合（任一触发即停），而不是写在一堆 if 里——新增一条停止规则不需要改循环。</p>
+            </article>
+          </div>
+
+          <h3>Q2：一次任务到底怎么跑（时序图逐段读）</h3>
+
+          <img src="/images/uml/agent-orchestration-seq.png" alt="Coding Agent 一次任务执行时序图：run、plan、guard、decide、execute、replan、abort" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>入口只做两件事：</strong>登记任务与预算、向 Planner 要一张 TaskGraph。<strong>不要在入口就开始调模型</strong>——先有形（图），再有神（推理）。</div>
+            <div class="flow-step" data-step="2"><strong>每轮开头先 guard()，再 decide()。</strong>顺序不能反：先判断"该不该继续"（预算/无进展/心跳），再花 token 让模型决策。反过来就会出现「预算已经爆了还在调模型」。</div>
+            <div class="flow-step" data-step="3"><strong>模型只给决策，不给结果。</strong>返回的是 <code class="inline">{tool, args}</code> 这种结构化意图；真正的执行由工具层完成，实际数值由确定性代码算。这是"不可信输出"的第一道隔离。</div>
+            <div class="flow-step" data-step="4"><strong>Observation 结构化回写。</strong>工具结果不是一段自由文本，而是 <code class="inline">{ok, summary, artifactUri, truncated}</code>：长输出落成文件只回路径，避免上下文被测试日志灌满。</div>
+            <div class="flow-step" data-step="5"><strong>失败才重规划。</strong>只有 Observation 表明失败/偏离时才调 <code class="inline">replan()</code>。否则每轮都重规划会让计划抖动、token 翻倍——这是很多人实现里的隐性浪费。</div>
+            <div class="flow-step" data-step="6"><strong>退出必须有现场。</strong>无论是 DONE 还是 ABORT，都写 Trace 并返回 usage：谁在什么状态、花了多少、停在哪一步。没有现场的失败等于没发生过。</div>
+          </div>
+
+          <h3>Q3：失败模式与对策（面试官最想看的部分）</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>空转死循环</h3>
+              <p>现象：每轮都"思考"但不产生新动作。<br/>对策：NoProgressGuard 比对状态指纹（当前步骤集 + 最后 Observation 哈希），连续 3 轮不变即终止，并把上下文打回 Planner 让其换策略。</p>
+            </article>
+            <article class="mini-card">
+              <h3>局部失败被当成成功</h3>
+              <p>现象：测试失败但模型说"已完成"。<br/>对策：完成判定不交给模型——由 Verifier 的可执行断言决定（见模块五），循环只在断言通过时才允许进入 DONE。</p>
+            </article>
+            <article class="mini-card">
+              <h3>计划雪崩</h3>
+              <p>现象：一次 replan 生成 40 步，步与步互相依赖。对策：限制单次计划规模（如 ≤ 12 步），超出的部分折叠成"后续计划"，执行完再展开——先粗后细。</p>
+            </article>
+            <article class="mini-card">
+              <h3>上下文爆炸</h3>
+              <p>现象：跑到第 20 步时 prompt 已经 90k。对策：编排层不持有全部历史，只持 Trace；每次组 prompt 时向 ContextManager 要"摘要 + 近期 + 检索"（见模块三）。</p>
+            </article>
+          </div>
+
+          <h3>Q4：这一层要观测什么指标</h3>
+          <p><strong>收敛性</strong>：任务成功率、平均步数、步数分布 P90（长尾说明规划质量差）；<strong>成本</strong>：每任务 token / 每步 token、缓存命中率；<strong>健康</strong>：熔断触发次数（按 reason 分桶）、无进展终止率、重规划率（&gt;30% 说明计划质量有问题）；<strong>时延</strong>：单步 P50/P99、任务墙钟。</p>
+
+          <h3>Q5：面试追问</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>"为什么用状态机而不是纯循环？"</h3>
+              <p>纯循环无法表达"正在等待外部审批/等待异步任务"这类中间态，也没法在崩溃后恢复。状态机让每个状态可持久化，进程重启后能接着跑（把 LoopState + TaskGraph 存库即可）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"多任务并行怎么隔离？"</h3>
+              <p>每个任务一个实例、一份 Budget、一棵 TaskGraph，共享无状态的服务（Planner/Provider）。共享的是<strong>只读资源与限流器</strong>，不是可变状态——这是避免锁最有效的办法。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"人工介入怎么设计？"</h3>
+              <p>把介入做成一个状态：<code class="inline">WAITING_APPROVAL</code>，任务挂起、释放资源、写 Trace；人处理完后通过 API 唤醒（带 resume token），循环从该状态继续，而不是从头重跑。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"怎么保证可复现？"</h3>
+              <p>记录三样：输入任务的哈希、每步的 decision 与 observation、模型与参数版本。回放时用 Trace 重演即可定位"哪一步开始跑偏"，这是排查 Agent 问题唯一可靠的方法。</p>
+            </article>
+          </div>
+
+          <div class="callout"><strong>收尾句：</strong>「编排层不产生智能，它保证智能<strong>有边界</strong>——有预算、有状态、能中断、可回放。没有这层边界的 Agent，在生产环境里就是一颗定时炸弹。」</div>

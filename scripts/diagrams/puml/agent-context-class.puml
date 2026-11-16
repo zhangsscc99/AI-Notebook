@@ -1,0 +1,85 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块三：上下文与记忆（类图）
+
+class ContextManager {
+  + build(task, step): Prompt
+  + usage(): TokenUsage
+  - assemble(system, recent, retrieved)
+}
+class TokenCounter {
+  + count(text): int
+}
+class Compressor {
+  + compress(messages): Summary
+  + keepRecent(n): [Message]
+}
+class MessageBuffer {
+  + append(m)
+  + window(n): [Message]
+}
+interface MemoryStore {
+  + write(fact: Fact)
+  + search(query, k): [Ref]
+}
+class SessionMemory {
+  + ttl: Duration
+}
+class EpisodicMemory {
+  + sqlite: "FTS5 + 向量"
+  + summarize(session)
+}
+class SemanticMemory {
+  + upsert(fact)
+  + evict(lru)
+}
+class Retriever {
+  + hybrid(query, k): [Ref]
+}
+class Embedder {
+  + embed(text): Vector
+}
+class Ref {
+  + uri: String
+  + snippet: String
+  + score: float
+}
+class Fact {
+  + key: String
+  + value: String
+  + ttl: Duration
+}
+
+ContextManager --> TokenCounter : 1
+ContextManager --> Compressor : 1
+ContextManager --> MessageBuffer : 1
+ContextManager --> Retriever : 1
+Retriever ..> MemoryStore : 并行查询
+Retriever --> Embedder : 1
+MemoryStore <|.. SessionMemory
+MemoryStore <|.. EpisodicMemory
+MemoryStore <|.. SemanticMemory
+Retriever ..> Ref : 返回 0..*
+MemoryStore ..> Fact : 存 0..*
+
+note bottom of ContextManager
+  上下文成本 = 摘要 + 最近 N 轮原文 + 检索片段。
+  原则：宁可多一次检索，也不要把窗口塞满——
+  塞满换来的不是信息，是更差的注意力。
+end note
+@enduml

@@ -1,0 +1,84 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块五：验证与部署闭环（类图）
+
+class WorktreeManager {
+  + create(taskId): Path
+  + merge(branch): MergeResult
+  + cleanup(taskId)
+}
+class Verifier {
+  + verify(fid: String): Report
+}
+class StaticCheck {
+  + run(path): [Issue]
+}
+class TestRunner {
+  + unit(): TestResult
+  + e2e(repeat): TestResult
+}
+class DeployGate {
+  + release(artifact): Release
+  + health(): bool
+}
+class AtomicRelease {
+  + newDir()
+  + switch()
+}
+class RollbackManager {
+  + rollback(release)
+}
+class ArtifactStore {
+  + put(path): Uri
+}
+class ReportBuilder {
+  + render(runs): Markdown
+}
+class Release {
+  + version: String
+  + path: Path
+  + healthy: bool
+}
+class Report {
+  + assertions: [Assertion]
+  + passed: bool
+  + level: Level
+}
+enum Level {
+  DATA
+  API
+  E2E
+}
+
+WorktreeManager ..> Verifier : 产出待验分支
+Verifier --> StaticCheck : 1
+Verifier --> TestRunner : 1
+Verifier ..> Report : 生成
+Report --> Level : 断言等级
+DeployGate --> AtomicRelease : 1
+DeployGate --> Release : 1
+DeployGate --> RollbackManager : 1
+Verifier --> ArtifactStore : 1
+ReportBuilder ..> Report : 渲染
+
+note bottom of DeployGate
+  门禁不变式：未通过验证的产物不得进入 Release；
+  健康检查失败必须回到上一个 Release。
+  data 级断言不足以判定完成，只有 api / e2e 级可以。
+end note
+@enduml

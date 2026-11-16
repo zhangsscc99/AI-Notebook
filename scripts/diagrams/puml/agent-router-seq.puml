@@ -1,0 +1,59 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块四：主模型失败后的降级链（429 / 超时 / 熔断）
+
+participant "AgentLoop" as L
+participant "ModelRouter" as R
+participant "RateLimiter" as RL
+participant "CircuitBreaker" as CB
+participant "主模型" as P1
+participant "备用模型" as P2
+participant "规则兜底" as P3
+
+L -> R : chat(req)
+activate R
+R -> RL : acquire(1)
+alt 令牌不足
+  RL --> R : false
+  R --> L : 429（本地快速失败，带 Retry-After）
+else 令牌充足
+  R -> CB : allow()
+  alt 熔断器 OPEN
+    CB --> R : false（跳过主模型）
+  else CLOSED / HALF_OPEN
+    R -> P1 : chat(req, timeout=60s)
+    alt 200
+      P1 --> R : 响应
+      R -> CB : onSuccess()
+    else 429 / 5xx / 超时
+      P1 --> R : error
+      R -> CB : onFailure()（连续 N 次 → OPEN）
+      R -> P2 : chat(req)（退避 + 抖动后一次重试）
+      alt 200
+        P2 --> R : 响应（记录降级指标）
+      else 仍失败
+        P2 --> R : error
+        R -> P3 : rule_fallback(req)（模板 / 上次成功结果）
+        P3 --> R : 兜底结果（标记 degraded=true）
+      end
+    end
+  end
+  R --> L : ChatResponse(degraded, model, usage)
+end
+deactivate R
+@enduml

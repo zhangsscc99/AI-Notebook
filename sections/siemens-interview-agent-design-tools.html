@@ -1,0 +1,92 @@
+<p>Coding Agent 和聊天机器人最大的区别就在这一层：<strong>它能动手改你的磁盘、跑命令、推代码</strong>。所以工具层的设计问题不是"怎么调通"，而是"怎么让它不能乱来"。</p>
+
+          <div class="callout"><strong>一句话定义：</strong>工具层 = 声明式工具描述（能做什么）+ 注册表（有哪些）+ 权限策略（允不允许）+ 沙箱（在哪执行）+ 审计（干过什么）。五件事必须分开，混在一起就是安全事故的温床。</div>
+
+          <h3>Q1：工具层的类怎么分</h3>
+
+          <img src="/images/uml/agent-tool-class.png" alt="Coding Agent 工具层类图：Tool、ToolSpec、ToolRegistry、PermissionPolicy、ApprovalGate、ToolInvoker、Sandbox、AuditLog" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>Tool：自描述，不自作主张</h3>
+              <p><code class="inline">spec()</code> 返回 <code class="inline">ToolSpec</code>（参数 schema、副作用等级、超时、是否幂等），<code class="inline">invoke()</code> 只做一件事。关键是<strong>副作用等级由工具自己声明</strong>，再由策略校验——声明错了，策略有权拒绝。</p>
+            </article>
+            <article class="mini-card">
+              <h3>SideEffect 三档：READ / WRITE / DANGEROUS</h3>
+              <p>三档不是学术分类，每一档对应不同的执行路径：READ 走白名单路径直接读；WRITE 限死在 workspace 内；DANGEROUS（部署、删除、数据迁移、推远程）必须过人工审批。给错档位 = 给错权限。</p>
+            </article>
+            <article class="mini-card">
+              <h3>ToolInvoker：横切能力的唯一入口</h3>
+              <p>校验 → 权限 → 审批 → 超时 → 幂等重试 → 计量 → 审计，七件事都用装饰器串在这里。<strong>工具实现里不许再写超时和重试</strong>，否则策略会分散到几十个文件里，无法审计。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Sandbox：真正的执行边界</h3>
+              <p>cgroup 限 CPU/内存/时长、文件系统只挂 workspace、网络默认禁（需要时白名单域名）。沙箱是最后一道闸——即使前面全被绕过，越权操作也只能在这个笼子里发生。</p>
+            </article>
+            <article class="mini-card">
+              <h3>AuditLog：为什么必须独立成件</h3>
+              <p>审计要能回答"谁、在哪个任务、用什么参数、改了什么、花了多少、结果如何"。写进业务日志会被人随手删，独立存储 + 追加写 + 保留期，才是可追溯。</p>
+            </article>
+            <article class="mini-card">
+              <h3>ApprovalGate：审批也要有超时</h3>
+              <p>危险操作等人确认，默认 10 分钟超时<strong>自动拒绝</strong>（fail-closed）。没有超时的审批等于挂起，Agent 会一直占着资源等人。</p>
+            </article>
+          </div>
+
+          <h3>Q2：一次危险调用的完整链路（时序图逐段读）</h3>
+
+          <img src="/images/uml/agent-tool-seq.png" alt="危险工具调用时序图：参数校验、权限判定、三级分支、人工审批、沙箱执行、审计" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先校验参数，再谈权限。</strong>顺序反了会浪费审批（人去点了一个参数根本不合法），也会把无效调用写进审计噪声。</div>
+            <div class="flow-step" data-step="2"><strong>权限判定看三样东西：</strong>工具声明的副作用等级、实际参数（比如 write 的路径是否越界）、调用主体（哪个任务/哪个用户）。<strong>不能只看工具名</strong>——同一个 <code class="inline">exec</code> 工具可能是只读 <code class="inline">ls</code>，也可能是 <code class="inline">rm -rf</code>。</div>
+            <div class="flow-step" data-step="3"><strong>三级分支对应三种执行代价：</strong>只读（毫秒级，无审批）、受限写（秒级，限 workspace）、危险（分钟级，等人）。分支不是可选的优化，是安全边界。</div>
+            <div class="flow-step" data-step="4"><strong>审批内容要是"人话"。</strong>给审批者的不是原始 JSON，而是「将部署 release-42 到线上，影响 3 个服务」这样的摘要 + 可展开的 diff。审批质量取决于信息质量。</div>
+            <div class="flow-step" data-step="5"><strong>沙箱执行带资源上限。</strong>一个死循环命令必须因为 CPU 时间被 kill，而不是把整机拖垮——这是"隔离"和"超时"两件事同时生效。</div>
+            <div class="flow-step" data-step="6"><strong>审计在返回之前落盘。</strong>先写审计再返回结果：宁可让调用方多等 5ms，也不能出现"操作发生了但没记录"。</div>
+          </div>
+
+          <h3>Q3：幂等与重试，怎么不出事</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>幂等键怎么算</h3>
+              <p><code class="inline">hash(tool_name, canonical_args, step_id)</code>。canonical_args 要规范化（键排序、去掉空白、路径绝对化），否则 <code class="inline">{"a":1,"b":2}</code> 和 <code class="inline">{"b":2,"a":1}</code> 会被当成两次调用。</p>
+            </article>
+            <article class="mini-card">
+              <h3>哪些能重试</h3>
+              <p>只有<strong>声明幂等 且 失败原因是网络/超时/5xx</strong> 的才自动重试；4xx、业务失败、非幂等写操作一律不重试。重试带指数退避 + 抖动，总次数 ≤ 3。</p>
+            </article>
+            <article class="mini-card">
+              <h3>非幂等写怎么安全重试</h3>
+              <p>先查状态再决定：写文件前查内容哈希、提交代码前查分支 HEAD、发消息前查消息 ID 是否已存在。「重试前先确认」是比"设计幂等"更通用的手段。</p>
+            </article>
+            <article class="mini-card">
+              <h3>长输出怎么办</h3>
+              <p><code class="inline">ToolResult.truncated = true</code> + <code class="inline">artifactUri</code> 指向落盘文件，回给模型的只有前 N 行 + 一句"完整输出见 xxx"。这是上下文预算的第一道闸。</p>
+            </article>
+          </div>
+
+          <h3>Q4：这一层要观测什么</h3>
+          <p><strong>安全</strong>：越权尝试次数（按工具/主体）、审批拒绝率与超时率、沙箱 kill 次数；<strong>效率</strong>：工具 P50/P99 延迟、超时率、重试率、幂等命中率（缓存省下的重复调用）；<strong>成本</strong>：每工具调用次数与耗时占比（找出最贵的工具）；<strong>质量</strong>：schema 校验失败率（高说明模型在用错参数，提示词或 schema 有问题）。</p>
+
+          <h3>Q5：面试追问</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>"模型硬要执行危险命令怎么办？"</h3>
+              <p>它做不到——模型只能产出 <code class="inline">{tool, args}</code>，执行权在 ToolInvoker。参数在被证明安全之前没有任何执行路径，这是<strong>架构上的不可达</strong>，不是靠提示词说服。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"怎么防止提示词注入让 Agent 执行恶意工具？"</h3>
+              <p>三道：内容来源标注（网页/文件内容视为不可信数据，不视为指令）、工具白名单按任务下发（这个任务只有 read/test/git 三个工具可见）、危险工具永远需要人确认。<strong>不信任任何进入上下文的外部文本。</strong></p>
+            </article>
+            <article class="mini-card">
+              <h3>"审批太多人会被烦死，怎么办？"</h3>
+              <p>按风险做分级授权：既定任务范围内、白名单目录、可回滚操作可以预授权（policy 里写规则）；只有不可逆、跨边界、涉及线上的才找人。目标是让人只看<strong>真正需要人判断</strong>的那 5%。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"多 Agent 共享工具会冲突吗？"</h3>
+              <p>工具本身无状态，冲突在资源上：文件用各任务独立 worktree、端口用分配表、数据库用事务 + 唯一约束。共享的无状态能力不用锁，有状态的资源必须有所有权。</p>
+            </article>
+          </div>
+
+          <div class="callout"><strong>收尾句：</strong>「工具层是 Agent 唯一能改变现实的地方，所以它必须是整条链路上<strong>最保守</strong>的一层——宁可多问一句，也不能让它自己决定什么叫安全。」</div>

@@ -1,0 +1,91 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块四：模型路由、限流与降级（类图）
+
+interface ModelProvider {
+  + chat(req: ChatRequest): ChatResponse
+  + health(): Health
+  + cost(usage): Money
+}
+class PrimaryProvider
+class BackupProvider
+class LocalProvider
+class RuleFallback
+
+class ModelRouter {
+  + route(req): Provider
+  + profile: RoutingProfile
+}
+class RateLimiter {
+  + acquire(n): bool
+  + bucket: 令牌桶
+}
+class CircuitBreaker {
+  + allow(): bool
+  + onSuccess()
+  + onFailure()
+  + state: State
+}
+enum State {
+  CLOSED
+  OPEN
+  HALF_OPEN
+}
+class FallbackChain {
+  + next(): Provider
+  + exhausted(): bool
+}
+class ResponseCache {
+  + get(key): ChatResponse
+  + put(key, resp)
+}
+class TokenBudget {
+  + charge(usage)
+  + remaining(): int
+}
+class ChatRequest {
+  + messages
+  + tools
+  + timeout
+}
+class ChatResponse {
+  + content
+  + usage
+  + model
+}
+
+ModelRouter ..> ModelProvider : 选择实现
+ModelRouter --> RateLimiter : 1
+ModelRouter --> CircuitBreaker : 1
+ModelRouter --> FallbackChain : 1
+ModelRouter --> ResponseCache : 1
+ModelProvider <|.. PrimaryProvider
+ModelProvider <|.. BackupProvider
+ModelProvider <|.. LocalProvider
+FallbackChain o-- "0..*" ModelProvider : 候选链
+RuleFallback ..|> ModelProvider
+CircuitBreaker --> State : current
+ModelRouter --> TokenBudget : 1
+ModelRouter ..> ChatRequest : 入参
+
+note bottom of ModelRouter
+  顺序不可乱：限流 → 熔断 → 调用 → 重试 → 降级。
+  重试只在「幂等 且 非 4xx」时发生；
+  4xx 立即失败，5xx / 超时才降级。
+end note
+@enduml

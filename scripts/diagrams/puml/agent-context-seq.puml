@@ -1,0 +1,52 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块三：上下文超阈值时的压缩与检索
+
+participant "AgentLoop" as L
+participant "ContextManager" as C
+participant "TokenCounter" as T
+participant "Compressor" as Z
+participant "Retriever" as R
+participant "MemoryStore" as MS
+participant "ModelProvider" as M
+
+L -> C : build(task, step)
+activate C
+C -> T : count(system + 历史 + 工具结果)
+T --> C : 92k / 100k（超 80% 阈值）
+C -> C : 触发压缩策略
+C -> Z : compress(早期消息)
+Z --> C : Summary(要点 + 决策 + 未完成项)
+C -> C : 保留最近 N 轮原文 + 摘要
+C -> R : hybrid(当前 step 目标, k=8)
+R -> MS : search(FTS5) 与 向量检索
+MS --> R : 候选 Ref
+R --> C : 融合排序 Top-8（去重）
+C --> L : Prompt(摘要 + 近期 + 引用片段)
+deactivate C
+
+L -> M : chat(prompt, tools)
+M --> L : 决策
+
+note over Z
+  压缩不是"截断"：
+  1) 早期消息 → 摘要
+  2) 工具大输出 → 只留 artifactUri + 结论
+  3) 失败尝试 → 保留原因，避免重复踩坑
+end note
+@enduml

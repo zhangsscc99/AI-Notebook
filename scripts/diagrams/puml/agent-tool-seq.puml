@@ -1,0 +1,58 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块二：一次危险工具调用的审批与执行
+
+participant "AgentLoop" as L
+participant "ToolInvoker" as I
+participant "PermissionPolicy" as P
+participant "ApprovalGate" as A
+participant "Sandbox" as S
+participant "AuditLog" as LOG
+actor "人（可选）" as H
+
+L -> I : invoke("deploy", args)
+activate I
+I -> I : 校验 args（JSON Schema）
+
+alt 参数不合法
+  I --> L : ToolResult(ok=false, schema_error)
+else 参数合法
+  I -> P : check(spec, args, principal)
+  P --> I : Decision
+  alt READ 且 路径白名单
+    I -> S : exec(read-only)
+  else WRITE 且 限 workspace
+    I -> S : exec(scoped write)
+  else DANGEROUS（deploy / rm / 迁移）
+    I -> A : request(action 摘要)
+    A -> H : 审批请求（超时 10 min 自动拒绝）
+    H --> A : allow
+    A --> I : approved
+    I -> S : exec(带 cgroup 限制)
+  end
+  S --> I : ExecResult(stdout, exitCode)
+  I -> LOG : record(who, tool, args, result, cost)
+  I --> L : ToolResult(ok, summary, artifactUri)
+end
+deactivate I
+
+note over I, LOG
+  全程幂等键 = hash(tool, args, step)
+  同一键重复调用直接返回缓存结果
+end note
+@enduml

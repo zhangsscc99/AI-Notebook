@@ -1,0 +1,92 @@
+<p>这一层是 Coding Agent 区别于一般 Agent 的地方：它交付的不是"一段文本"，而是<strong>一次真实的代码变更和一次上线</strong>。所以必须有机器验收 + 可回滚——否则自动化的速度会等比例放大事故。</p>
+
+          <div class="callout"><strong>一句话定义：</strong>闭环 = 隔离（worktree）+ 验证（可执行断言，分级）+ 门禁（不通过不合入）+ 原子发布（不出现白屏窗口）+ 回滚（健康检查失败自动退回）。<strong>Agent 说"完成"不算完成，断言通过才算。</strong></div>
+
+          <h3>Q1：验证与部署闭环的类怎么分</h3>
+
+          <img src="/images/uml/agent-verify-class.png" alt="验证与部署闭环类图：WorktreeManager、Verifier、StaticCheck、TestRunner、DeployGate、AtomicRelease、RollbackManager" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>WorktreeManager：隔离的物理基础</h3>
+              <p>每个任务一个 git worktree + 独立分支。好处不是"好看"，而是<strong>并行任务互不踩</strong>：A 改前端、B 改后端，谁都不用等谁；失败丢弃分支即可，不污染主干。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Verifier：断言的执行者</h3>
+              <p>读功能清单里每条的可执行断言并运行。关键设计：<strong>断言分级</strong>——<code class="inline">data</code>（只查数据存在）不足以判完成，只有 <code class="inline">api</code> / <code class="inline">e2e</code> 级通过才算。这一条直接消灭了"假绿"。</p>
+            </article>
+            <article class="mini-card">
+              <h3>StaticCheck / TestRunner：两种成本</h3>
+              <p>静态检查秒级、测试分钟级。先跑便宜的，失败立刻返回——不要在类型错误的情况下还去跑十分钟 E2E。E2E 要 <code class="inline">--repeat</code> 多跑几轮，专治 flaky。</p>
+            </article>
+            <article class="mini-card">
+              <h3>DeployGate：门禁的唯一入口</h3>
+              <p>只有 Verifier 通过才允许 release；发布后必须健康检查（公网 200 + 关键路由 + 日志无异常）。门禁的价值在于<strong>它不信任任何上游</strong>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>AtomicRelease：为什么不能覆盖目录</h3>
+              <p>构建期覆盖 dist 会有一段"文件不齐"的窗口，用户正好此时访问就是白屏或 404。正确做法：构建到新目录 → 软链原子切换 → 旧版本保留到确认健康。</p>
+            </article>
+            <article class="mini-card">
+              <h3>RollbackManager：回滚是最贵的功能</h3>
+              <p>回滚必须<strong>一键且已知终点</strong>：保留上一版 release 的完整产物 + 数据兼容说明。没有回滚能力的自动化部署，本质是在赌运气。</p>
+            </article>
+          </div>
+
+          <h3>Q2：一条任务从改码到上线（时序图逐段读）</h3>
+
+          <img src="/images/uml/agent-verify-seq.png" alt="任务从改码到上线时序图：worktree、验证、断言分级、合并、原子发布、健康检查、回滚" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先分地，再干活。</strong>worktree 必须在 Agent 动手之前创建；让它直接改主目录，等于放弃回滚能力。</div>
+            <div class="flow-step" data-step="2"><strong>改完立刻验证，不攒着。</strong>攒五个改动再一起跑，一旦失败你不知道是谁弄坏的——二分排查的成本远高于立即验证。</div>
+            <div class="flow-step" data-step="3"><strong>断言分级决定"能不能算完成"。</strong>data 级绿灯只能说明"字段存在"，api 级说明"接口真的返回了对的东西"，e2e 级说明"用户路径真的能走通"。只有后两级能勾完成。</div>
+            <div class="flow-step" data-step="4"><strong>失败就丢分支，不硬修。</strong>让 Agent 在被污染的现场里反复修补，成本远高于重来；丢弃 + 带着失败原因重试，成功率高得多。</div>
+            <div class="flow-step" data-step="5"><strong>合并后还要重跑全量。</strong>单条通过 ≠ 组合通过（接口契约、共享样式、迁移顺序都可能打架）。合并后回归是最后一道闸。</div>
+            <div class="flow-step" data-step="6"><strong>发布后健康检查，失败自动回滚。</strong>检查项要具体：公网状态码、关键路由可达、日志无新增 error、数据库迁移幂等。<strong>回滚也走同一条门禁</strong>，不能手动救火。</div>
+          </div>
+
+          <h3>Q3：失败模式与对策</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>假绿（最危险）</h3>
+              <p>现象：断言只查"数据里有没有这个词"，功能其实没做。<br/>对策：断言分级 + 强制 api/e2e 级 + 断言强度评审（高风险项若只有 data 级断言，直接阻断）。</p>
+            </article>
+            <article class="mini-card">
+              <h3>Flaky 测试</h3>
+              <p>现象：同一份代码今天过明天不过。<br/>对策：每个用例独立 context / 独立数据、显式等待而非 sleep、只对超时与网络错误重试一次、<code class="inline">--repeat=3</code> 连跑才认。</p>
+            </article>
+            <article class="mini-card">
+              <h3>并行构建踩 ABI</h3>
+              <p>现象：多个 worktree 同时 <code class="inline">npm install</code> 重编译原生模块，运行时报 DLOPEN 失败。<br/>对策：依赖安装用只读缓存 / 预构建产物，构建阶段加"原生模块一致性检查"。</p>
+            </article>
+            <article class="mini-card">
+              <h3>发布期间白屏</h3>
+              <p>现象：用户正好在构建窗口访问，拿到缺失资源。<br/>对策：原子发布（新目录 + 软链）；入口 HTML 用 no-cache，静态资源用 hash + immutable。</p>
+            </article>
+          </div>
+
+          <h3>Q4：指标</h3>
+          <p><strong>质量</strong>：断言通过率、假绿拦截数、回归失败率、flaky 率（同代码多次运行的不一致率）；<strong>交付</strong>：从任务创建到上线的时长、一次通过率、回滚次数；<strong>稳定</strong>：发布失败率、健康检查失败原因分布、平均恢复时间（MTTR）。</p>
+
+          <h3>Q5：面试追问</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>"Agent 自己写测试自己跑，不是既当运动员又当裁判？"</h3>
+              <p>所以断言来自<strong>需求清单</strong>而不是 Agent 的临场发挥：验收标准在任务开始前就固定（写在功能条目里），Agent 只能让它通过，不能改判定标准。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"E2E 太慢，每次发布都跑不现实？"</h3>
+              <p>分层：提交级跑冒烟（2 分钟内）、合并前跑关键路径（10 分钟）、夜间跑全量。慢不是砍掉的理由，而是分级的理由。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"数据库迁移怎么保证安全？"</h3>
+              <p>只向前、幂等、可重入：迁移脚本带版本号与 <code class="inline">IF NOT EXISTS</code>；破坏性变更分两步（先加列、双写、再删旧列）；回滚预案写进发布单。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"怎么防止 Agent 改坏别人的代码？"</h3>
+              <p>worktree 隔离 + 变更范围限制（任务只授权改特定目录/文件）+ diff 审阅（触碰禁区直接阻断，例如首页组件）。权限最小化在代码层面同样适用。</p>
+            </article>
+          </div>
+
+          <div class="callout"><strong>收尾句：</strong>「自动化真正的门槛不在'让它写代码'，而在'<strong>让它的产出可被机器判定为合格</strong>'。没有这一层，Agent 越快，你越危险。」</div>

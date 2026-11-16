@@ -1,0 +1,57 @@
+@startuml
+skinparam defaultFontName "WenQuanYi Zen Hei"
+skinparam dpi 150
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #4a5b7a
+skinparam ClassBorderColor #9aa8c0
+skinparam ClassBackgroundColor #ffffff
+skinparam ClassHeaderBackgroundColor #eef2f9
+skinparam SequenceArrowThickness 1.2
+skinparam SequenceParticipantBackgroundColor #ffffff
+skinparam SequenceParticipantBorderColor #4a5b7a
+skinparam SequenceLifeLineBorderColor #9aa8c0
+skinparam NoteBackgroundColor #fdf6e3
+skinparam NoteBorderColor #d8c9a3
+skinparam PackageBorderColor #b9c4d6
+title Coding Agent · 模块五：一条任务从改码到上线（失败自动回滚）
+
+participant "调度器" as O
+participant "WorktreeManager" as W
+participant "Agent（改码）" as A
+participant "Verifier" as V
+participant "TestRunner" as TR
+participant "DeployGate" as D
+participant "Rollback" as RB
+
+O -> W : create(taskId)
+W --> O : /worktrees/<taskId>（独立分支）
+O -> A : 在 worktree 内实现（devin / 本地模型）
+A --> O : 变更（未提交）
+
+O -> V : verify(fid)
+activate V
+V -> V : 断言分级检查（data 级不算完成）
+V -> TR : unit + e2e(--repeat=3)
+TR --> V : 结果
+
+alt 任一断言失败
+  V --> O : Report(passed=false, 具体断言)
+  O -> W : 丢弃该分支（不合并）
+  note right of O : 只有 devin 真失败才回退到备用模型重做
+else 全部通过
+  V --> O : Report(passed=true)
+  O -> W : merge(branch) 到 main
+  O -> D : release()
+  D -> D : 原子发布（新目录 + 软链切换）
+  D -> D : health check 公网 + 关键路由
+  alt 健康检查通过
+    D --> O : Release(healthy=true)
+  else 健康检查失败
+    D -> RB : rollback(previous)
+    RB --> O : 已回滚到上一版本
+  end
+end
+deactivate V
+@enduml

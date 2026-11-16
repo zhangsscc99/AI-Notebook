@@ -1,0 +1,92 @@
+<p>Agent 一天几百次调用，主模型不可能永远可用：限流、超时、5xx、区域故障、额度耗尽。这一层要保证的是——<strong>降级是有序的、可观测的、不放大故障的</strong>。</p>
+
+          <div class="callout"><strong>一句话定义：</strong>模型路由 = 选实现的策略（成本/延迟/能力）+ 限流（保护下游）+ 熔断（切断已坏的）+ 降级链（换一个能用的）+ 缓存（干脆不调）。顺序不能乱：<strong>限流 → 熔断 → 调用 → 重试 → 降级</strong>。</div>
+
+          <h3>Q1：路由层的类怎么分</h3>
+
+          <img src="/images/uml/agent-router-class.png" alt="模型路由类图：ModelRouter、ModelProvider、RateLimiter、CircuitBreaker、FallbackChain、ResponseCache、TokenBudget" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>ModelProvider：只描述"一个模型怎么调"</h3>
+              <p><code class="inline">chat</code> / <code class="inline">health</code> / <code class="inline">cost</code> 三个方法。不同厂商的差异（参数格式、工具调用协议、流式事件）都消化在各自的实现里，上层永远看到同一份 <code class="inline">ChatRequest</code>。</p>
+            </article>
+            <article class="mini-card">
+              <h3>ModelRouter：策略在这里，不散落</h3>
+              <p>按路由画像选实现：短任务用便宜的、长推理用强的、涉及工具的必须有 function calling 能力。策略集中后，调优成本模型只改一个类。</p>
+            </article>
+            <article class="mini-card">
+              <h3>RateLimiter：令牌桶 + 多维配额</h3>
+              <p>维度至少三个：全局 QPS、每模型 RPM、每任务预算。令牌桶允许突发（用户体验），但桶容量别设太大——它决定你最多能给下游造成多大瞬时压力。</p>
+            </article>
+            <article class="mini-card">
+              <h3>CircuitBreaker：三态，不是开关</h3>
+              <p>CLOSED →（连续失败 N 次）→ OPEN（快速失败 T 秒）→ HALF_OPEN（放 1 个试探）→ 成功回 CLOSED / 失败再 OPEN。没有 HALF_OPEN 就没法自动恢复。</p>
+            </article>
+            <article class="mini-card">
+              <h3>FallbackChain：候选链，不是 if-else</h3>
+              <p>链式配置（主 → 备 → 本地 → 规则），每级带自己的超时与预算。链在运行时可动态调整（比如备用模型今天很慢，临时降权），而不是写死在代码里。</p>
+            </article>
+            <article class="mini-card">
+              <h3>ResponseCache：最便宜的调用是不调用</h3>
+              <p>键 = 模型 + 参数 + 消息哈希（前缀缓存命中率往往 90%+）。注意区分：确定性任务可缓存完整结果，创意型任务只缓存 embedding 与工具结果。</p>
+            </article>
+          </div>
+
+          <h3>Q2：主模型挂了到底怎么走（时序图逐段读）</h3>
+
+          <img src="/images/uml/agent-router-seq.png" alt="模型降级时序图：限流、熔断判定、主模型失败、备用模型重试、规则兜底" style="display:block;width:100%;max-width:1100px;margin:1.5em auto;border:1px solid #dbe2ee;border-radius:12px;background:#fff"/>
+
+          <div class="flow">
+            <div class="flow-step" data-step="1"><strong>先限流：</strong>没有令牌就地快速失败并返回 Retry-After。<strong>不要排队</strong>——排队会在下游恢复时形成回流冲击（thundering herd）。</div>
+            <div class="flow-step" data-step="2"><strong>再熔断：</strong>熔断器 OPEN 时直接跳过主模型，省下每次 60 秒的超时等待。这一步经常被忽略，结果是"故障期间每个请求都白等一分钟"。</div>
+            <div class="flow-step" data-step="3"><strong>调用带超时：</strong>连接超时 3s、读超时按任务类型（普通 60s、长推理 120s）。超时是熔断的输入信号——没有超时的调用会让熔断永远等不到失败。</div>
+            <div class="flow-step" data-step="4"><strong>只在特定错误上降级：</strong>429 / 5xx / 超时才降级；<strong>4xx（参数错、内容违规）不降级</strong>——换模型也一样错，只会浪费一次调用并掩盖问题。</div>
+            <div class="flow-step" data-step="5"><strong>备用调用带退避与抖动：</strong>立即重试往往打在同一个故障节点上；退避 200–800ms + 随机抖动是性价比最高的一招。</div>
+            <div class="flow-step" data-step="6"><strong>全部失败才用规则兜底：</strong>返回模板化结果或上次成功结果，并标记 <code class="inline">degraded=true</code>。宁可给出明确"降级结果"，也不要编一个看起来正常的答案。</div>
+          </div>
+
+          <h3>Q3：失败模式与对策</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>重试风暴</h3>
+              <p>现象：下游一抖动，所有客户端同时重试把它压死。<br/>对策：指数退避 + 抖动 + 重试预算（全局重试次数上限）+ 熔断。三者缺一都会放大故障。</p>
+            </article>
+            <article class="mini-card">
+              <h3>降级链变慢</h3>
+              <p>现象：备用模型比主模型慢 3 倍，降级后任务全部超时。<br/>对策：备用级也有独立超时，且失败即快速跳过；降级链长度控制在 3 级以内。</p>
+            </article>
+            <article class="mini-card">
+              <h3>额度耗尽无感知</h3>
+              <p>现象：月中额度用完，任务集体失败。<br/>对策：TokenBudget 按窗口统计并对水位告警（如 80% 预警），超额时自动切低成本通道，而不是等报错。</p>
+            </article>
+            <article class="mini-card">
+              <h3>缓存把错误答案固化</h3>
+              <p>现象：一次异常响应被缓存，之后一直返回它。<br/>对策：只缓存 <code class="inline">ok && !degraded</code> 的响应；缓存键包含模型版本；设置 TTL。</p>
+            </article>
+          </div>
+
+          <h3>Q4：指标</h3>
+          <p><strong>可用性</strong>：各 provider 成功率、P99 延迟、熔断打开时长；<strong>降级</strong>：降级率（按原因分桶：429 / 超时 / 5xx）、降级后任务成功率（判断降级是否"有效"）；<strong>成本</strong>：每任务成本、缓存命中率、降级链各层的花费占比；<strong>容量</strong>：令牌桶拒绝数、额度水位。</p>
+
+          <h3>Q5：面试追问</h3>
+          <div class="grid-2">
+            <article class="mini-card">
+              <h3>"为什么重试要在熔断之后判？"</h3>
+              <p>熔断是"这个下游现在不值得试"，重试是"这次可能偶发"。先熔断能避免在明确故障期反复打靶；也只有熔断后，重试预算才不会被同一故障吃光。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"多个 Agent 抢同一额度怎么办？"</h3>
+              <p>把额度做成共享资源：全局令牌桶 + 每任务配额（租约），任务开始时申请、结束时归还。低优先级任务在紧张时先被拒——优先级比公平更重要。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"降级结果要不要告诉用户？"</h3>
+              <p>必须。响应里带 <code class="inline">degraded / model / reason</code>，UI 上显式标注"简化回答"。静默降级是最坏的设计——用户会以为系统变笨了。</p>
+            </article>
+            <article class="mini-card">
+              <h3>"怎么验证降级链真的能用？"</h3>
+              <p>故障演练：注入 429/超时（混沌测试），断言任务仍能完成且指标正确。没演练过的降级链，第一次真正用到就是生产事故。</p>
+            </article>
+          </div>
+
+          <div class="callout"><strong>收尾句：</strong>「LLM 应用的高可用不是'多接几个模型'，而是<strong>把失败当成常态来设计</strong>：限流保护下游、熔断切断坏路、降级保住体验、指标证明它真的生效。」</div>
